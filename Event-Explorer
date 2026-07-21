@@ -1,0 +1,2392 @@
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local InputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local TextService = game:GetService("TextService")
+
+local StrLower = string.lower
+local StrFind = string.find
+local StrMatch = string.match
+local StrReplace = string.gsub
+local StrSub = string.sub
+local StrSplit = string.split
+local StrGmatch = string.gmatch
+local TableInsert = table.insert
+local TableRemove = table.remove
+local TableFind = table.find
+local TableClear = table.clear
+local MathMax = math.max
+local MathFloor = math.floor
+local NextPair = next
+local IPairs = ipairs
+local Pairs = pairs
+local PCall = pcall
+local GetType = typeof
+local RawType = type
+local ToStr = tostring
+local ToNum = tonumber
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerId = LocalPlayer and LocalPlayer.UserId or 0
+local DisplayName = LocalPlayer and LocalPlayer.DisplayName or "Player"
+local Username = LocalPlayer and LocalPlayer.Name or "Player"
+
+local UserThumbnail = "rbxasset://textures/ui/GuidelineLight.png"
+if LocalPlayer then
+	PCall(function()
+		UserThumbnail = Players:GetUserThumbnailAsync(PlayerId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+end
+
+local GlobalNames = {
+	game = true, workspace = true, script = true, shared = true,
+	_G = true, math = true, string = true, table = true,
+	task = true, coroutine = true, print = true, warn = true,
+	error = true, pairs = true, ipairs = true, next = true,
+	tostring = true, tonumber = true, type = true, typeof = true,
+	pcall = true, xpcall = true, select = true, require = true,
+	delay = true, spawn = true, wait = true, tick = true,
+	time = true, assert = true, ["true"] = true, ["false"] = true,
+	["nil"] = true, CFrame = true, Vector3 = true, Instance = true,
+	Color3 = true, BrickColor = true, UDim = true, UDim2 = true,
+	Region3 = true, Rect = true, Faces = true, Axes = true
+}
+
+local ServiceNames = {
+	Players = true, ReplicatedStorage = true, Workspace = true, ServerStorage = true,
+	TweenService = true, HttpService = true, Debris = true, Lighting = true,
+	MaterialService = true, SoundService = true, StarterGui = true, StarterPack = true,
+	StarterPlayer = true, Teams = true, TestService = true, TextChatService = true,
+	VoiceChatService = true, ReplicatedFirst = true, ServerScriptService = true,
+	TeleportService = true, UserInputService = true, ContextActionService = true,
+	RunService = true, PathfindingService = true, GroupService = true,
+	BadgeService = true, MarketplaceService = true, MessagingService = true,
+	DataStoreService = true, AnalyticsService = true, AssetService = true,
+	AvatarEditorService = true, Chat = true, CollectionService = true,
+	ContentProvider = true, GuiService = true, HapticService = true,
+	InsertService = true, JointsService = true, LogService = true,
+	NotificationService = true, PhysicsService = true, PolicyService = true,
+	ProximityPromptService = true, Selection = true, SocialService = true,
+	TranslationService = true, UserService = true, VRService = true
+}
+
+local TypeNames = {
+	Color3 = true, Vector3 = true, CFrame = true, BrickColor = true,
+	Enum = true, math = true, table = true, string = true, UDim = true,
+	UDim2 = true, Region3 = true, Rect = true, Faces = true, Axes = true
+}
+
+local RemoteTriggers = {
+	":FireServer", ":InvokeServer", ":Fire", ":Invoke"
+}
+
+local ExcludedScriptNames = {
+	["owner only"] = true, ["Animate"] = true, ["RbxCharacterSounds"] = true, ["PlayerScriptsLoader"] = true, ["FreecamScript"] = true, ["Controller"] = true, ["CoreGui"] = true
+}
+
+local ExcludedModuleNames = {
+	["PlayerModule"] = true, ["ControlModule"] = true, ["TouchJump"] = true, ["ClickToMoveController"] = true, ["DynamicThumbstick"] = true, ["VehicleController"] = true, ["PathDisplay"] = true, ["AvatarAbilitiesInterface"] = true, ["VRNavigation"] = true, ["ClickToMoveDisplay"] = true, ["Gamepad"] = true, ["BaseCharacterController"] = true, ["Keyboard"] = true, ["TouchThumbstick"] = true, ["CameraModule"] = true, ["BaseCamera"] = true, ["VRVehicleCamera"] = true, ["ClassicCamera"] = true, ["CameraUtils"] = true, ["MouseLockController"] = true, ["ZoomController"] = true, ["Popper"] = true, ["TransparencyController"] = true, ["VRVehicleCameraDeprecated"] = true, ["CameraToggleStateController"] = true, ["CameraInput"] = true, ["VRCamera"] = true, ["VehicleCamera"] = true, ["VehicleCameraConfig"] = true, ["VehicleCameraCore"] = true, ["Poppercam"] = true, ["OrbitalCamera"] = true, ["LegacyCamera"] = true, ["Invisicam"] = true, ["BaseOcclusion"] = true, ["CameraUI"] = true, ["VRBaseCamera"] = true, ["CharacterUtil"] = true, ["CameraWrapper.spec"] = true, ["ConnectionUtil.spec"] = true, ["ConnectionUtil"] = true, ["CameraWrapper"] = true, ["FlagUtil"] = true, ["AtomicBinding"] = true
+}
+
+local ScriptCache = {}
+local ScriptList = {}
+local CurrentSelection = nil
+local AllConnections = {}
+local InputState = {}
+
+local NextLayout = math.huge
+local MinimumSize = Vector2.new(900, 500)
+
+local function IsInCore(Instance: Instance): boolean
+	local Current = Instance
+	while Current and Current ~= game do
+		local Parent = Current.Parent
+		if Parent then
+			local ClassName = Parent.ClassName
+			if ClassName == "CoreGui" or ClassName == "CorePackages" or ClassName == "LocalSaves" then
+				return true
+			end
+		end
+		Current = Parent
+	end
+	return false
+end
+
+local function Create(ClassName: string, Properties: { [string]: any }?, Children: { Instance }?): Instance
+	local Instance = Instance.new(ClassName)
+	for Key, Value in NextPair, Properties or {} do
+		Instance[Key] = Value
+	end
+	for _, Child in NextPair, Children or {} do
+		Child.Parent = Instance
+	end
+	return Instance
+end
+
+local function GetInstancePath(Instance: Instance): string
+	if not Instance then return "nil" end
+	local PathParts = {}
+	local Current = Instance
+
+	while Current and Current ~= game do
+		local Name = Current.Name
+		if StrMatch(Name, "^[%a_][%w_]*$") then
+			TableInsert(PathParts, 1, Name)
+		else
+			local Escaped = StrReplace(Name, '"', '\\"')
+			TableInsert(PathParts, 1, '["' .. Escaped .. '"]')
+		end
+		Current = Current.Parent
+	end
+
+	local Path = "game"
+	for _, Part in IPairs(PathParts) do
+		if StrSub(Part, 1, 1) == "[" then
+			Path = Path .. Part
+		else
+			Path = Path .. "." .. Part
+		end
+	end
+	return Path
+end
+
+local function Tokenize(Code: string): { { Type: string, Value: string } }
+	local Tokens = {}
+	local Length = #Code
+	local Index = 1
+
+	while Index <= Length do
+		local Char = StrSub(Code, Index, Index)
+
+		if StrMatch(Char, "%s") then
+			local Start = Index
+			while Index <= Length and StrMatch(StrSub(Code, Index, Index), "%s") do
+				Index = Index + 1
+			end
+			TableInsert(Tokens, {Type = "Whitespace", Value = StrSub(Code, Start, Index - 1)})
+		elseif Char == '"' or Char == "'" then
+			local Start = Index
+			local QuoteChar = Char
+			Index = Index + 1
+			while Index <= Length do
+				local Current = StrSub(Code, Index, Index)
+				if Current == QuoteChar and StrSub(Code, Index - 1, Index - 1) ~= "\\" then
+					Index = Index + 1
+					break
+				end
+				Index = Index + 1
+			end
+			TableInsert(Tokens, {Type = "String", Value = StrSub(Code, Start, Index - 1)})
+		elseif StrSub(Code, Index, Index + 1) == "--" then
+			local EndPos = StrFind(Code, "\n", Index) or Length + 1
+			TableInsert(Tokens, {Type = "Comment", Value = StrSub(Code, Index, EndPos - 1)})
+			Index = EndPos
+		elseif StrSub(Code, Index, Index + 3) == "--[[" then
+			local Start = Index
+			Index = Index + 4
+			while Index <= Length - 1 do
+				if StrSub(Code, Index, Index + 1) == "]]" then
+					Index = Index + 2
+					break
+				end
+				Index = Index + 1
+			end
+			TableInsert(Tokens, {Type = "BlockComment", Value = StrSub(Code, Start, Index - 1)})
+		elseif StrMatch(Char, "[%a_]") then
+			local Start = Index
+			while Index <= Length and StrMatch(StrSub(Code, Index, Index), "[%w_]") do
+				Index = Index + 1
+			end
+			TableInsert(Tokens, {Type = "Identifier", Value = StrSub(Code, Start, Index - 1)})
+		elseif StrMatch(Char, "[%d]") then
+			local Start = Index
+			while Index <= Length and StrMatch(StrSub(Code, Index, Index), "[%x%.%e%E%+%-]") do
+				Index = Index + 1
+			end
+			TableInsert(Tokens, {Type = "Number", Value = StrSub(Code, Start, Index - 1)})
+		elseif Index < Length then
+			local TwoChar = StrSub(Code, Index, Index + 1)
+			if TwoChar == "==" or TwoChar == "~=" or TwoChar == "<=" or TwoChar == ">=" or TwoChar == ".." or TwoChar == "::" then
+				TableInsert(Tokens, {Type = "Operator", Value = TwoChar})
+				Index = Index + 2
+			else
+				TableInsert(Tokens, {Type = "Symbol", Value = Char})
+				Index = Index + 1
+			end
+		else
+			TableInsert(Tokens, {Type = "Symbol", Value = Char})
+			Index = Index + 1
+		end
+	end
+
+	return Tokens
+end
+
+local function RemoveComments(Tokens: { { Type: string, Value: string } }): string
+	local Result = {}
+	for Index = 1, #Tokens do
+		local Token = Tokens[Index]
+		if Token.Type ~= "Comment" and Token.Type ~= "BlockComment" then
+			TableInsert(Result, Token.Value)
+		end
+	end
+	return table.concat(Result)
+end
+
+local function ValidatePath(Tokens: { { Type: string, Value: string } }): boolean
+	if not Tokens or #Tokens == 0 then return false end
+
+	local FirstValue = Tokens[1].Value
+	local IsValid = (FirstValue == "game" or FirstValue == "workspace" or FirstValue == "script")
+
+	if not IsValid and ServiceNames[FirstValue] then
+		IsValid = true
+	end
+
+	if not IsValid then return false end
+
+	for Index = 1, #Tokens do
+		local Token = Tokens[Index]
+		if Token.Type == "Symbol" or Token.Type == "Operator" then
+			local Value = Token.Value
+			if Value == ":" or Value == "(" or Value == ")" or Value == "[" or Value == "]" or
+			   Value == "+" or Value == "-" or Value == "*" or Value == "/" or Value == "^" or Value == "#" or
+			   Value == "==" or Value == "~=" then
+				return false
+			end
+		end
+	end
+
+	for Index = 1, #Tokens - 2 do
+		if Tokens[Index].Type == "Identifier" and Tokens[Index+1].Value == "." then
+			local Name = Tokens[Index].Value
+			if TypeNames[Name] then
+				return false
+			end
+		end
+	end
+
+	return true
+end
+
+local function OptimizeGetService(Expression: string): string
+	if not Expression or Expression == "" then return "" end
+
+	local Tokens = Tokenize(Expression)
+	if not ValidatePath(Tokens) then
+		return Expression
+	end
+
+	local ServiceMatch = StrMatch(Expression, "^game%s*:%s*GetService%s*%(\"([^\"]+)\"%)")
+
+	local Result = Expression
+	local Base = ""
+
+	if ServiceMatch then
+		Base = 'game:GetService("' .. ServiceMatch .. '")'
+		local MatchLen = #StrMatch(Expression, "^game%s*:%s*GetService%s*%(\"[^\"]+\"%)")
+		Result = StrSub(Expression, MatchLen + 1)
+	else
+		local ServiceName = nil
+		for Service in Pairs(ServiceNames) do
+			if StrSub(Expression, 1, #("game." .. Service)) == "game." .. Service then
+				ServiceName = Service
+				break
+			end
+		end
+
+		if ServiceName then
+			Base = 'game:GetService("' .. ServiceName .. '")'
+			Result = StrSub(Expression, #("game." .. ServiceName) + 1)
+		elseif StrSub(Expression, 1, 5) == "game." then
+			Base = 'game'
+			Result = StrSub(Expression, 5)
+		end
+	end
+
+	for Part in StrGmatch(Result, "[^%.]+") do
+		if Part ~= "" then
+			if Base == "" then
+				Base = Part
+			else
+				if StrMatch(Part, "^[%a_][%w_]*$") then
+					Base = Base .. ':FindFirstChild("' .. Part .. '")'
+				else
+					Base = Base .. '.' .. Part
+				end
+			end
+		end
+	end
+
+	return Base ~= "" and Base or Expression
+end
+
+local function UnquoteString(Str: string): string
+	if not Str then return "" end
+	local Unquoted = StrMatch(Str, "^%s*['\"](.*)['\"]%s*$")
+	return Unquoted or Str
+end
+
+local function SplitArguments(ArgumentString: string): { string }
+	local Result = {}
+	local Current = ""
+	local Depth = 0
+	local InString = false
+	local StringChar = nil
+
+	for Index = 1, #ArgumentString do
+		local Char = StrSub(ArgumentString, Index, Index)
+		if InString then
+			if Char == StringChar and StrSub(ArgumentString, Index - 1, Index - 1) ~= "\\" then
+				InString = false
+			end
+			Current = Current .. Char
+		elseif Char == '"' or Char == "'" then
+			InString = true
+			StringChar = Char
+			Current = Current .. Char
+		elseif Char == "(" or Char == "{" or Char == "[" then
+			Depth = Depth + 1
+			Current = Current .. Char
+		elseif Char == ")" or Char == "}" or Char == "]" then
+			Depth = Depth - 1
+			Current = Current .. Char
+		elseif Char == "," and Depth == 0 then
+			TableInsert(Result, StrMatch(Current, "^%s*(.-)%s*$"))
+			Current = ""
+		else
+			Current = Current .. Char
+		end
+	end
+	TableInsert(Result, StrMatch(Current, "^%s*(.-)%s*$"))
+	return Result
+end
+
+local function FindCalls(Code: string): { { name: string, args: string } }
+	local Calls = {}
+	local StartPos = 1
+	while StartPos <= #Code do
+		local Begin, End, Name = StrFind(Code, "([%a_][%w_]*)%s*%(", StartPos)
+		if not Begin then break end
+
+		local Depth = 1
+		local ArgStart = End + 1
+		local ArgEnd = nil
+		local Pos = ArgStart
+		local InString = false
+		local StringChar = nil
+
+		while Pos <= #Code do
+			local Char = StrSub(Code, Pos, Pos)
+			if InString then
+				if Char == StringChar and StrSub(Code, Pos - 1, Pos - 1) ~= "\\" then
+					InString = false
+				end
+			elseif Char == '"' or Char == "'" then
+				InString = true
+				StringChar = Char
+			elseif Char == "(" then
+				Depth = Depth + 1
+			elseif Char == ")" then
+				Depth = Depth - 1
+				if Depth == 0 then
+					ArgEnd = Pos - 1
+					break
+				end
+			end
+			Pos = Pos + 1
+		end
+
+		if ArgEnd then
+			local Args = StrSub(Code, ArgStart, ArgEnd)
+			TableInsert(Calls, {name = Name, args = Args})
+			StartPos = Pos + 1
+		else
+			StartPos = End + 1
+		end
+	end
+	return Calls
+end
+
+local function FuzzyScore(Needle: string, Haystack: string): number
+	local NeedleLen = #Needle
+	local HaystackLen = #Haystack
+	if NeedleLen == 0 then return 1 end
+	if HaystackLen < NeedleLen then return 0 end
+	local NeedlePos = 1
+	local Score = 0
+	local LastMatch = 0
+	for HayPos = 1, HaystackLen do
+		local HayChar = StrSub(Haystack, HayPos, HayPos)
+		local NeedleChar = StrSub(Needle, NeedlePos, NeedlePos)
+		if HayChar == NeedleChar then
+			if LastMatch > 0 and HayPos == LastMatch + 1 then
+				Score = Score + 15
+			else
+				Score = Score + 5
+			end
+			LastMatch = HayPos
+			NeedlePos = NeedlePos + 1
+			if NeedlePos > NeedleLen then
+				return Score + (HaystackLen - HayPos) * 0.1
+			end
+		end
+	end
+	return 0
+end
+
+local function SearchRelevance(Item: { ScriptNameLower: string, LogNameLower: string, ModuleNameLower: string }, Query: string): number
+	if Query == "" then return 0 end
+	local ScriptLower = Item.ScriptNameLower or ""
+	local LogLower = Item.LogNameLower or ""
+	local ModuleLower = Item.ModuleNameLower or ""
+
+	if ScriptLower == Query or LogLower == Query or ModuleLower == Query then
+		return 10000
+	end
+
+	if StrSub(ScriptLower, 1, #Query) == Query or StrSub(LogLower, 1, #Query) == Query or StrSub(ModuleLower, 1, #Query) == Query then
+		return 8000
+	end
+
+	local Pattern = "%f[%w_]" .. Query
+	if StrFind(ScriptLower, Pattern) or StrFind(LogLower, Pattern) or StrFind(ModuleLower, Pattern) then
+		return 6000
+	end
+
+	if StrFind(ScriptLower, Query, 1, true) or StrFind(LogLower, Query, 1, true) or StrFind(ModuleLower, Query, 1, true) then
+		return 4000
+	end
+
+	local Score1 = FuzzyScore(Query, ScriptLower)
+	local Score2 = FuzzyScore(Query, LogLower)
+	local Score3 = FuzzyScore(Query, ModuleLower)
+	local MaxScore = MathMax(Score1, Score2, Score3)
+	if MaxScore > 0 then
+		return 1000 + MaxScore
+	end
+
+	return 0
+end
+
+local COLOR_NORMAL = Color3.fromRGB(24, 24, 24)
+local COLOR_HOVER = Color3.fromRGB(32, 32, 32)
+local COLOR_SELECTED = Color3.fromRGB(0, 100, 180)
+local COLOR_SELECTED_HOVER = Color3.fromRGB(0, 120, 200)
+
+local MainGui = Create("ScreenGui", {ResetOnSpawn = false})
+
+local GuiSuccess = PCall(function()
+	MainGui.Parent = game:GetService("CoreGui")
+end)
+if not GuiSuccess and LocalPlayer then
+	MainGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local MainFrame = Create("Frame", {
+	Parent = MainGui,
+	BackgroundColor3 = Color3.fromRGB(12, 12, 12),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(40, 40, 40),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	Size = UDim2.new(0, 700, 0, 400),
+	Visible = true,
+	ClipsDescendants = true
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = MainFrame})
+
+local ScriptsPanel = Create("Frame", {
+	Parent = MainFrame,
+	BackgroundColor3 = Color3.fromRGB(18, 18, 18),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(35, 35, 35),
+	Position = UDim2.new(0, 6, 0, 58),
+	Size = UDim2.new(0, 140, 0, 336)
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = ScriptsPanel})
+
+local ScriptsPanelLabel = Create("TextLabel", {
+	Parent = ScriptsPanel,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 8, 0, 4),
+	Size = UDim2.new(1, -16, 0, 18),
+	Font = Enum.Font.Gotham,
+	Text = "Scripts",
+	TextColor3 = Color3.fromRGB(180, 180, 180),
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+local SearchContainer = Create("Frame", {
+	Parent = ScriptsPanel,
+	BackgroundColor3 = Color3.fromRGB(12, 12, 12),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(35, 35, 35),
+	Position = UDim2.new(0, 6, 0, 24),
+	Size = UDim2.new(1, -12, 0, 20)
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = SearchContainer})
+
+local SearchBox = Create("TextBox", {
+	Parent = SearchContainer,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 6, 0, 0),
+	Size = UDim2.new(1, -12, 1, 0),
+	Font = Enum.Font.Gotham,
+	PlaceholderText = "Search...",
+	Text = "",
+	TextColor3 = Color3.fromRGB(220, 220, 220),
+	PlaceholderColor3 = Color3.fromRGB(100, 100, 100),
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false
+})
+
+local ScriptsList = Create("ScrollingFrame", {
+	Parent = ScriptsPanel,
+	Active = true,
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Position = UDim2.new(0, 4, 0, 48),
+	Size = UDim2.new(1, -8, 1, -54),
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ScrollBarThickness = 2,
+	ScrollBarImageColor3 = Color3.fromRGB(60, 60, 60)
+})
+
+local ScriptsLayout = Create("UIListLayout", {
+	Parent = ScriptsList,
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Padding = UDim.new(0, 3)
+})
+
+local EventsPanel = Create("Frame", {
+	Parent = MainFrame,
+	BackgroundColor3 = Color3.fromRGB(18, 18, 18),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(35, 35, 35),
+	Position = UDim2.new(0, 152, 0, 58),
+	Size = UDim2.new(0, 250, 0, 336),
+	ClipsDescendants = true
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = EventsPanel})
+
+local EventsPanelLabel = Create("TextLabel", {
+	Parent = EventsPanel,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 6, 0, 4),
+	Size = UDim2.new(1, -12, 0, 18),
+	Font = Enum.Font.Gotham,
+	Text = "Event Calls",
+	TextColor3 = Color3.fromRGB(180, 180, 180),
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+local EventsView = Create("ScrollingFrame", {
+	Parent = EventsPanel,
+	Active = true,
+	BackgroundColor3 = Color3.fromRGB(10, 10, 10),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(30, 30, 30),
+	Position = UDim2.new(0, 6, 0, 24),
+	Size = UDim2.new(0, 238, 0, 158),
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = Color3.fromRGB(60, 60, 60)
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = EventsView})
+
+local ParametersView = Create("ScrollingFrame", {
+	Parent = EventsPanel,
+	Active = true,
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 6, 0, 190),
+	Size = UDim2.new(0, 238, 0, 140),
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = Color3.fromRGB(60, 60, 60),
+	BorderSizePixel = 0
+})
+
+local ParametersGrid = Create("UIGridLayout", {
+	Parent = ParametersView,
+	HorizontalAlignment = Enum.HorizontalAlignment.Left,
+	VerticalAlignment = Enum.VerticalAlignment.Top,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	FillDirection = Enum.FillDirection.Horizontal,
+	CellPadding = UDim2.new(0, 4, 0, 4),
+	CellSize = UDim2.new(0, 110, 0, 20)
+})
+
+local LogsPanel = Create("Frame", {
+	Parent = MainFrame,
+	BackgroundColor3 = Color3.fromRGB(18, 18, 18),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(35, 35, 35),
+	Position = UDim2.new(0, 408, 0, 58),
+	Size = UDim2.new(0, 286, 0, 336),
+	ClipsDescendants = true
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = LogsPanel})
+
+local LogsPanelLabel = Create("TextLabel", {
+	Parent = LogsPanel,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 6, 0, 4),
+	Size = UDim2.new(1, -12, 0, 18),
+	Font = Enum.Font.Gotham,
+	Text = "Logs",
+	TextColor3 = Color3.fromRGB(180, 180, 180),
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+local LogsView = Create("ScrollingFrame", {
+	Parent = LogsPanel,
+	Active = true,
+	BackgroundColor3 = Color3.fromRGB(10, 10, 10),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(30, 30, 30),
+	Position = UDim2.new(0, 6, 0, 24),
+	Size = UDim2.new(0, 274, 0, 302),
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = Color3.fromRGB(60, 60, 60)
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = LogsView})
+
+local LogsOutput = Create("TextBox", {
+	Parent = LogsView,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	MultiLine = true,
+	Text = "",
+	TextColor3 = Color3.fromRGB(160, 160, 160),
+	TextSize = 9,
+	Font = Enum.Font.Gotham,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextEditable = false,
+	TextWrapped = true,
+	Size = UDim2.new(1, 0, 1, 0)
+})
+
+local LogsPadding = Instance.new("UIPadding")
+LogsPadding.PaddingLeft = UDim.new(0, 6)
+LogsPadding.PaddingRight = UDim.new(0, 6)
+LogsPadding.PaddingTop = UDim.new(0, 6)
+LogsPadding.PaddingBottom = UDim.new(0, 6)
+LogsPadding.Parent = LogsOutput
+
+local EventsOutput = Create("TextBox", {
+	Parent = EventsView,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	MultiLine = true,
+	Text = "Click Refresh Scripts to scan the game.",
+	TextColor3 = Color3.fromRGB(160, 160, 160),
+	TextSize = 10,
+	Font = Enum.Font.Gotham,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextEditable = false,
+	TextWrapped = true,
+	Size = UDim2.new(1, 0, 1, 0)
+})
+
+local EventsPadding = Instance.new("UIPadding")
+EventsPadding.PaddingLeft = UDim.new(0, 8)
+EventsPadding.PaddingRight = UDim.new(0, 8)
+EventsPadding.PaddingTop = UDim.new(0, 8)
+EventsPadding.PaddingBottom = UDim.new(0, 8)
+EventsPadding.Parent = EventsOutput
+
+local HeaderFrame = Create("Frame", {
+	Parent = MainFrame,
+	BackgroundColor3 = Color3.fromRGB(24, 24, 24),
+	BorderSizePixel = 1,
+	BorderColor3 = Color3.fromRGB(40, 40, 40),
+	Size = UDim2.new(1, 0, 0, 52)
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = HeaderFrame})
+
+local HeaderUnderline = Create("Frame", {
+	Parent = HeaderFrame,
+	BackgroundColor3 = Color3.fromRGB(24, 24, 24),
+	BorderSizePixel = 0,
+	Position = UDim2.new(0, 0, 0, 40),
+	Size = UDim2.new(1, 0, 0, 12)
+})
+
+local UserAvatar = Create("Frame", {
+	Parent = HeaderFrame,
+	Position = UDim2.new(0, 8, 0, 6),
+	Size = UDim2.new(0, 40, 0, 40),
+	BackgroundColor3 = Color3.fromRGB(15, 15, 20),
+	BorderColor3 = Color3.fromRGB(0, 150, 255),
+	BorderSizePixel = 1
+})
+Create("UICorner", {CornerRadius = UDim.new(0.5, 0), Parent = UserAvatar})
+
+local AvatarImage = Create("ImageLabel", {
+	Parent = UserAvatar,
+	Size = UDim2.new(1, -4, 1, -4),
+	Position = UDim2.new(0, 2, 0, 2),
+	BackgroundTransparency = 1,
+	Image = UserThumbnail
+})
+Create("UICorner", {CornerRadius = UDim.new(0.5, 0), Parent = AvatarImage})
+
+local UserInfo = Create("Frame", {
+	Parent = HeaderFrame,
+	Position = UDim2.new(0, 56, 0, 4),
+	Size = UDim2.new(0, 280, 0, 44),
+	BackgroundTransparency = 1
+})
+
+local DisplayNameLabel = Create("TextLabel", {
+	Parent = UserInfo,
+	Size = UDim2.new(1, 0, 0, 13),
+	Position = UDim2.new(0, 0, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	Text = DisplayName,
+	TextColor3 = Color3.fromRGB(255, 255, 255),
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+local UsernameLabel = Create("TextLabel", {
+	Parent = UserInfo,
+	Size = UDim2.new(1, 0, 0, 11),
+	Position = UDim2.new(0, 0, 0, 12),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	Text = "@" .. Username,
+	TextColor3 = Color3.fromRGB(150, 150, 150),
+	TextSize = 9,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+local UserIdLabel = Create("TextLabel", {
+	Parent = UserInfo,
+	Size = UDim2.new(1, 0, 0, 10),
+	Position = UDim2.new(0, 0, 0, 22),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	Text = "UID: " .. ToStr(PlayerId),
+	TextColor3 = Color3.fromRGB(0, 150, 255),
+	TextSize = 8,
+	TextXAlignment = Enum.TextXAlignment.Left
+})
+
+local CloseButton = Create("TextButton", {
+	Parent = HeaderFrame,
+	BackgroundColor3 = Color3.fromRGB(24, 24, 24),
+	BorderSizePixel = 0,
+	Position = UDim2.new(1, -26, 0, 15),
+	Size = UDim2.new(0, 22, 0, 22),
+	Font = Enum.Font.Gotham,
+	Text = "",
+	TextColor3 = Color3.new(0, 0, 0),
+	TextSize = 14
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = CloseButton})
+
+local CloseIcon = Create("ImageLabel", {
+	Parent = CloseButton,
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 7, 0, 7),
+	Size = UDim2.new(0, 8, 0, 8),
+	Image = "http://www.roblox.com/asset/?id=5597086202",
+	ImageColor3 = Color3.fromRGB(220, 220, 220)
+})
+
+local MinimizeButton = Create("TextButton", {
+	Parent = HeaderFrame,
+	BackgroundColor3 = Color3.fromRGB(24, 24, 24),
+	BorderSizePixel = 0,
+	Position = UDim2.new(1, -50, 0, 15),
+	Size = UDim2.new(0, 22, 0, 22),
+	Font = Enum.Font.Gotham,
+	Text = "",
+	TextColor3 = Color3.new(0, 0, 0),
+	TextSize = 14
+})
+
+local MinimizeIcon = Create("ImageLabel", {
+	Parent = MinimizeButton,
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 7, 0, 7),
+	Size = UDim2.new(0, 8, 0, 8),
+	Image = "http://www.roblox.com/asset/?id=5597105827",
+	ImageColor3 = Color3.fromRGB(220, 220, 220)
+})
+
+local Watermark = Create("ImageLabel", {
+	Parent = HeaderFrame,
+	Size = UDim2.new(0, 600, 0, 120),
+	Position = UDim2.new(1, -400, 0, -30),
+	BackgroundTransparency = 1,
+	ImageTransparency = 0,
+	Image = "rbxassetid://77816636188978",
+	ScaleType = Enum.ScaleType.Fit
+})
+
+local ResizeHandle = Create("ImageButton", {
+	Parent = MainFrame,
+	Name = "ResizeHandle",
+	BackgroundTransparency = 1,
+	Position = UDim2.new(1, -12, 1, -12),
+	Size = UDim2.new(0, 12, 0, 12),
+	Image = "rbxassetid://3944703564",
+	ImageRectOffset = Vector2.new(844, 684),
+	ImageRectSize = Vector2.new(36, 36),
+	ImageColor3 = Color3.fromRGB(80, 80, 80),
+	ZIndex = 10
+})
+
+local Tooltip = Create("Frame", {
+	Parent = MainGui,
+	BackgroundColor3 = Color3.fromRGB(10, 10, 10),
+	BackgroundTransparency = 1,
+	BorderColor3 = Color3.fromRGB(50, 50, 50),
+	Size = UDim2.new(0, 200, 0, 50),
+	ZIndex = 3,
+	Visible = false
+})
+
+Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Tooltip})
+
+local TooltipText = Create("TextLabel", {
+	Parent = Tooltip,
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 6, 0, 6),
+	Size = UDim2.new(0, 188, 0, 38),
+	ZIndex = 3,
+	Font = Enum.Font.Gotham,
+	Text = "",
+	TextColor3 = Color3.fromRGB(230, 230, 230),
+	TextTransparency = 1,
+	TextSize = 11,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top
+})
+
+local IsMinimized = false
+local TooltipConnection = nil
+local TooltipState = {}
+
+local TweenSettings = TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+
+local function ApplyTween(Instance: Instance, Properties: { [string]: any })
+	TweenService:Create(Instance, TweenSettings, Properties):Play()
+end
+
+local function AddLog(Message: string)
+	local CurrentText = LogsOutput.Text
+	local TimeStr = os.date("%H:%M:%S")
+	local Timestamp = "[" .. TimeStr .. "] " .. Message
+	
+	if CurrentText == "" then
+		LogsOutput.Text = Timestamp
+	else
+		LogsOutput.Text = CurrentText .. "\n" .. Timestamp
+	end
+	
+	local TextSize = TextService:GetTextSize(LogsOutput.Text, LogsOutput.TextSize, LogsOutput.Font, Vector2.new(342, math.huge))
+	LogsView.CanvasSize = UDim2.fromOffset(0, TextSize.Y + 12)
+	LogsView.CanvasPosition = Vector2.new(0, TextSize.Y)
+end
+
+local function RearrangeLayout()
+	if IsMinimized then
+		return
+	end
+
+	local FrameWidth = MainFrame.AbsoluteSize.X
+	local FrameHeight = MainFrame.AbsoluteSize.Y
+
+	local Padding = 6
+	local LeftWidth = 140
+	local RightWidth = 286
+
+	local MiddleWidth = MathMax(180, FrameWidth - LeftWidth - RightWidth - (Padding * 5))
+
+	ScriptsPanel.Position = UDim2.fromOffset(Padding, 58)
+	ScriptsPanel.Size = UDim2.fromOffset(LeftWidth, FrameHeight - 64)
+
+	EventsPanel.Position = UDim2.fromOffset(LeftWidth + (Padding * 2), 58)
+	EventsPanel.Size = UDim2.fromOffset(MiddleWidth, FrameHeight - 64)
+
+	LogsPanel.Position = UDim2.fromOffset(
+		LeftWidth + MiddleWidth + (Padding * 3),
+		58
+	)
+	LogsPanel.Size = UDim2.fromOffset(RightWidth, FrameHeight - 64)
+
+	LogsView.Size = UDim2.fromOffset(RightWidth - 12, FrameHeight - 98)
+
+	EventsView.Size = UDim2.fromOffset(
+		MiddleWidth - 12,
+		MathMax(100, FrameHeight - 242)
+	)
+
+	ParametersView.Position = UDim2.fromOffset(
+		6,
+		EventsView.Position.Y.Offset + EventsView.Size.Y.Offset + 8
+	)
+
+	ParametersView.Size = UDim2.fromOffset(
+		MiddleWidth - 12,
+		MathMax(60, FrameHeight - ParametersView.Position.Y.Offset - 6)
+	)
+
+	ResizeHandle.Position = UDim2.new(1, -12, 1, -12)
+end
+
+TableInsert(AllConnections, MainFrame:GetPropertyChangedSignal("Size"):Connect(RearrangeLayout))
+
+local function UpdateTooltipSize()
+	local TextSize = TextService:GetTextSize(TooltipText.Text, TooltipText.TextSize, TooltipText.Font, Vector2.new(196, math.huge))
+	TooltipText.Size = UDim2.new(0, TextSize.X, 0, TextSize.Y)
+	Tooltip.Size = UDim2.new(0, TextSize.X + 12, 0, TextSize.Y + 12)
+end
+
+local function HighlightClose()
+	ApplyTween(CloseButton, {BackgroundColor3 = Color3.fromRGB(180, 40, 40)})
+	ApplyTween(CloseIcon, {ImageColor3 = Color3.fromRGB(255, 255, 255)})
+end
+
+local function UnhighlightClose()
+	ApplyTween(CloseButton, {BackgroundColor3 = Color3.fromRGB(24, 24, 24)})
+	ApplyTween(CloseIcon, {ImageColor3 = Color3.fromRGB(220, 220, 220)})
+end
+
+local function HighlightButton(Button: Instance, Icon: Instance?, Bar: Instance?, BarColor: Color3?)
+	ApplyTween(Button, {BackgroundColor3 = Color3.fromRGB(35, 35, 35)})
+	if Icon then
+		ApplyTween(Icon, {ImageColor3 = Color3.fromRGB(255, 255, 255)})
+	end
+	if Bar and BarColor then
+		ApplyTween(Bar, {BackgroundColor3 = BarColor})
+	end
+end
+
+local function UnhighlightButton(Button: Instance, Icon: Instance?, Bar: Instance?, BarColor: Color3?)
+	ApplyTween(Button, {BackgroundColor3 = Color3.fromRGB(24, 24, 24)})
+	if Icon then
+		ApplyTween(Icon, {ImageColor3 = Color3.fromRGB(220, 220, 220)})
+	end
+	if Bar and BarColor then
+		ApplyTween(Bar, {BackgroundColor3 = BarColor})
+	end
+end
+
+local IsDragging = false
+local DragStart = nil
+local DragOffset = nil
+
+HeaderFrame.InputBegan:Connect(function(Input)
+	if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+		IsDragging = true
+		DragStart = Input.Position
+		DragOffset = MainFrame.Position
+
+		Input.Changed:Connect(function()
+			if Input.UserInputState == Enum.UserInputState.End then
+				IsDragging = false
+			end
+		end)
+	end
+end)
+
+InputService.InputChanged:Connect(function(Input)
+	if not IsDragging then return end
+	if Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch then
+		local Delta = Input.Position - DragStart
+		MainFrame.Position = UDim2.new(
+			DragOffset.X.Scale,
+			DragOffset.X.Offset + Delta.X,
+			DragOffset.Y.Scale,
+			DragOffset.Y.Offset + Delta.Y
+		)
+	end
+end)
+
+local IsResizing = false
+local ResizeStart = nil
+local ResizeSize = nil
+TableInsert(AllConnections, ResizeHandle.InputBegan:Connect(function(Input)
+	if (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch) and not IsMinimized then
+		IsResizing = true
+		ResizeStart = Input.Position
+		ResizeSize = MainFrame.Size
+
+		Input.Changed:Connect(function()
+			if Input.UserInputState == Enum.UserInputState.End then
+				IsResizing = false
+				if not IsMinimized then
+					MinimumSize = Vector2.new(MainFrame.Size.X.Offset, MainFrame.Size.Y.Offset)
+				end
+			end
+		end)
+	end
+end))
+
+TableInsert(AllConnections, InputService.InputChanged:Connect(function(Input)
+	if IsResizing and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+		local Delta = Input.Position - ResizeStart
+		local MinWidth = 400
+		local NewWidth = MathMax(MinWidth, ResizeSize.X.Offset + Delta.X)
+		local NewHeight = MathMax(250, ResizeSize.Y.Offset + Delta.Y)
+		MainFrame.Size = UDim2.new(0, NewWidth, 0, NewHeight)
+	end
+end))
+
+local function ToggleMinimize()
+	if MainFrame.Size.X.Offset == 0 then return end
+	IsMinimized = not IsMinimized
+	if IsMinimized then
+		ApplyTween(ScriptsPanel, {BackgroundTransparency = 1})
+		ApplyTween(EventsPanel, {BackgroundTransparency = 1})
+		ApplyTween(LogsPanel, {BackgroundTransparency = 1})
+		ScriptsPanel.Visible = false
+		EventsPanel.Visible = false
+		LogsPanel.Visible = false
+		ResizeHandle.Visible = false
+		MainFrame:TweenSize(UDim2.new(0, MainFrame.Size.X.Offset, 0, 52), "Out", "Quad", 0.15, true)
+		HeaderUnderline.Visible = false
+	else
+		ScriptsPanel.Visible = true
+		EventsPanel.Visible = true
+		LogsPanel.Visible = true
+		ResizeHandle.Visible = true
+		ApplyTween(ScriptsPanel, {BackgroundTransparency = 0})
+		ApplyTween(EventsPanel, {BackgroundTransparency = 0})
+		ApplyTween(LogsPanel, {BackgroundTransparency = 0})
+		MainFrame:TweenSize(UDim2.new(0, MinimumSize.X, 0, MinimumSize.Y), "Out", "Quad", 0.15, true)
+		HeaderUnderline.Visible = true
+	end
+end
+
+local function ShowTooltip(ShouldShow: boolean, Message: string?)
+	if ShouldShow and Message then
+		if Tooltip.Visible then
+			local Connection = TooltipState["Connection"]
+			if Connection then Connection:Disconnect() end
+		end
+		local FirstUpdate = true
+		TooltipState["Connection"] = RunService.RenderStepped:Connect(function()
+			local MousePos = InputService:GetMouseLocation()
+			local TooltipPos = MousePos + Vector2.new(15, -10)
+			local TooltipEnd = TooltipPos + Tooltip.AbsoluteSize
+			local ViewportSize = workspace.CurrentCamera.ViewportSize
+			local MaxX = ViewportSize.X
+			local MaxY = ViewportSize.Y
+
+			if TooltipPos.X < 0 then
+				TooltipPos = Vector2.new(0, TooltipPos.Y)
+			elseif TooltipEnd.X > MaxX then
+				TooltipPos = Vector2.new(MaxX - Tooltip.AbsoluteSize.X, TooltipPos.Y)
+			end
+			if TooltipPos.Y < 0 then
+				TooltipPos = Vector2.new(TooltipPos.X, 0)
+			elseif TooltipEnd.Y > MaxY - 35 then
+				TooltipPos = Vector2.new(TooltipPos.X, MaxY - Tooltip.AbsoluteSize.Y - 35)
+			end
+			if TooltipPos.X <= MousePos.X and TooltipPos.Y <= MousePos.Y then
+				TooltipPos = Vector2.new(MousePos.X - Tooltip.AbsoluteSize.X - 2, MousePos.Y - Tooltip.AbsoluteSize.Y - 2)
+			end
+			if FirstUpdate then
+				Tooltip.Position = UDim2.fromOffset(TooltipPos.X, TooltipPos.Y)
+				FirstUpdate = false
+			else
+				Tooltip.Position = UDim2.fromOffset(TooltipPos.X, TooltipPos.Y)
+			end
+		end)
+		TooltipText.Text = Message
+		TooltipText.TextScaled = true
+		Tooltip.Visible = true
+		ApplyTween(Tooltip, {BackgroundTransparency = 0.05})
+		ApplyTween(TooltipText, {TextTransparency = 0})
+	else
+		if Tooltip.Visible then
+			local Connection = TooltipState["Connection"]
+			if Connection then Connection:Disconnect() end
+			Tooltip.Visible = false
+			Tooltip.BackgroundTransparency = 1
+			TooltipText.TextTransparency = 1
+		end
+	end
+end
+
+TableInsert(AllConnections, CloseButton.MouseEnter:Connect(HighlightClose))
+TableInsert(AllConnections, CloseButton.MouseLeave:Connect(UnhighlightClose))
+
+local function DestroyGui()
+	ShowTooltip(false)
+	for _, Connection in IPairs(AllConnections) do
+		if Connection then Connection:Disconnect() end
+	end
+	for _, Connection in Pairs(TooltipState) do
+		if Connection then Connection:Disconnect() end
+	end
+	MainGui:Destroy()
+end
+TableInsert(AllConnections, CloseButton.MouseButton1Click:Connect(DestroyGui))
+
+TableInsert(AllConnections, MinimizeButton.MouseEnter:Connect(function() HighlightButton(MinimizeButton, MinimizeIcon) end))
+TableInsert(AllConnections, MinimizeButton.MouseLeave:Connect(function() UnhighlightButton(MinimizeButton, MinimizeIcon) end))
+TableInsert(AllConnections, MinimizeButton.MouseButton1Click:Connect(ToggleMinimize))
+
+TableInsert(AllConnections, TooltipText:GetPropertyChangedSignal("Text"):Connect(UpdateTooltipSize))
+
+local function CreateButton(Label: string, Tooltip: string, Color: Color3, HoverColor: Color3, Callback: (...any) -> ())
+	local Button = Create("Frame", {
+		Name = "FunctionTemplate",
+		Parent = ParametersView,
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0, 110, 0, 20)
+	})
+
+	local Bar = Create("Frame", {
+		Name = "ColorBar",
+		Parent = Button,
+		BackgroundColor3 = Color,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 2, 0, 2),
+		Size = UDim2.new(0, 3, 0, 16),
+		ZIndex = 3
+	})
+
+	local Text = Create("TextLabel", {
+		Text = Label,
+		Name = "Text",
+		Parent = Button,
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 8, 0, 2),
+		Size = UDim2.new(0, 98, 0, 16),
+		ZIndex = 2,
+		Font = Enum.Font.Gotham,
+		TextColor3 = Color3.fromRGB(220, 220, 220),
+		TextSize = 9,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center
+	})
+
+	local ButtonArea = Create("TextButton", {
+		Name = "Button",
+		Parent = Button,
+		BackgroundColor3 = Color3.fromRGB(24, 24, 24),
+		BackgroundTransparency = 0,
+		BorderColor3 = Color3.fromRGB(45, 45, 45),
+		Position = UDim2.new(0, 0, 0, 2),
+		Size = UDim2.new(0, 110, 0, 16),
+		AutoButtonColor = false,
+		Font = Enum.Font.Gotham,
+		Text = "",
+		TextColor3 = Color3.new(0, 0, 0),
+		TextSize = 14
+	})
+
+	Create("UICorner", {CornerRadius = UDim.new(0, 3), Parent = ButtonArea})
+
+	local function GetTooltip()
+		return GetType(Tooltip) == "function" and Tooltip() or Tooltip
+	end
+
+	TableInsert(AllConnections, ButtonArea.MouseEnter:Connect(function()
+		HighlightButton(ButtonArea, nil, Bar, HoverColor)
+		ShowTooltip(true, GetTooltip())
+	end))
+
+	TableInsert(AllConnections, ButtonArea.MouseLeave:Connect(function()
+		UnhighlightButton(ButtonArea, nil, Bar, Color)
+		ShowTooltip(false)
+	end))
+
+	TableInsert(AllConnections, Button.AncestryChanged:Connect(function()
+		ShowTooltip(false)
+	end))
+
+	TableInsert(AllConnections, ButtonArea.MouseButton1Click:Connect(function(...)
+		Callback(Button, ...)
+	end))
+
+	TableInsert(AllConnections, ParametersGrid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		ParametersView.CanvasSize = UDim2.fromOffset(ParametersGrid.AbsoluteContentSize.X, ParametersGrid.AbsoluteContentSize.Y)
+	end))
+
+	return ButtonArea
+end
+
+local function ResolveVariables(Code: string, Variables: { [string]: string }): string
+	local Iterations = 0
+	local Replacements = {}
+
+	repeat
+		local Changed = false
+		local Tokens = Tokenize(Code)
+		local NewTokens = {}
+		local TokenCount = #Tokens
+		local TokenIndex = 1
+
+		while TokenIndex <= TokenCount do
+			local Token = Tokens[TokenIndex]
+			if Token.Type == "Identifier" and not GlobalNames[Token.Value] then
+				local Name = Token.Value
+				local Replacement = Variables[Name]
+
+				if Replacement and Replacement ~= "nil" and Replacement ~= "" and not Replacements[Name] then
+					local IsAfterDot = false
+
+					local PrevIndex = TokenIndex - 1
+					while PrevIndex >= 1 and Tokens[PrevIndex].Type == "Whitespace" do
+						PrevIndex = PrevIndex - 1
+					end
+					if PrevIndex >= 1 and (Tokens[PrevIndex].Type == "Symbol" or Tokens[PrevIndex].Type == "Operator") and (Tokens[PrevIndex].Value == "." or Tokens[PrevIndex].Value == ":") then
+						IsAfterDot = true
+					end
+
+					if not IsAfterDot then
+						local IsBuiltinCall = false
+						local CheckIndex = PrevIndex
+						if CheckIndex >= 1 and Tokens[CheckIndex].Type == "Symbol" and Tokens[CheckIndex].Value == "(" then
+							CheckIndex = CheckIndex - 1
+							while CheckIndex >= 1 and Tokens[CheckIndex].Type == "Whitespace" do
+								CheckIndex = CheckIndex - 1
+							end
+							if CheckIndex >= 1 and Tokens[CheckIndex].Type == "Identifier" and GlobalNames[Tokens[CheckIndex].Value] then
+								IsBuiltinCall = true
+							end
+						end
+
+						if not IsBuiltinCall then
+							local NextIndex = TokenIndex + 1
+							while NextIndex <= TokenCount and Tokens[NextIndex].Type == "Whitespace" do
+								NextIndex = NextIndex + 1
+							end
+
+							local IsSpecialCall = false
+							if NextIndex <= TokenCount and Tokens[NextIndex].Type == "Symbol" and Tokens[NextIndex].Value == "(" then
+								if Name == "WaitForChild" or Name == "FindFirstChild" or StrFind(Replacement, "^game:GetService") or StrFind(Replacement, "^game%.") then
+									IsSpecialCall = true
+								end
+							end
+
+							if not IsSpecialCall then
+								Token.Value = Replacement
+								Changed = true
+								Replacements[Name] = true
+							end
+						end
+					end
+				end
+			end
+			TableInsert(NewTokens, Token)
+			TokenIndex = TokenIndex + 1
+		end
+
+		if Changed then
+			Code = RemoveComments(NewTokens)
+		end
+		Iterations = Iterations + 1
+	until not Changed or Iterations > 20
+
+	return StrMatch(Code, "^%s*(.-)%s*$")
+end
+
+local function OptimizeScript(Code: string, Variables: { [string]: string }, BasePath: string): string
+	local Tokens = Tokenize(Code)
+	local TokenCount = #Tokens
+	local TokenIndex = 1
+
+	while TokenIndex <= TokenCount do
+		local Token = Tokens[TokenIndex]
+		if Token.Type == "Identifier" then
+			if Token.Value == "script" then
+				local IsAfterDot = false
+				local PrevIndex = TokenIndex - 1
+				while PrevIndex >= 1 and Tokens[PrevIndex].Type == "Whitespace" do
+					PrevIndex = PrevIndex - 1
+				end
+				if PrevIndex >= 1 and (Tokens[PrevIndex].Type == "Symbol" or Tokens[PrevIndex].Type == "Operator") and (Tokens[PrevIndex].Value == "." or Tokens[PrevIndex].Value == ":") then
+					IsAfterDot = true
+				end
+
+				if not IsAfterDot then
+					local NextIndex = TokenIndex + 1
+					local ParentCount = 0
+					while NextIndex <= TokenCount do
+						if Tokens[NextIndex].Type == "Whitespace" then
+							NextIndex = NextIndex + 1
+						elseif (Tokens[NextIndex].Type == "Symbol" or Tokens[NextIndex].Type == "Operator") and Tokens[NextIndex].Value == "." then
+							local CheckIndex = NextIndex + 1
+							while CheckIndex <= TokenCount and Tokens[CheckIndex].Type == "Whitespace" do
+								CheckIndex = CheckIndex + 1
+							end
+							if CheckIndex <= TokenCount and Tokens[CheckIndex].Type == "Identifier" and Tokens[CheckIndex].Value == "Parent" then
+								ParentCount = ParentCount + 1
+								NextIndex = CheckIndex + 1
+							else
+								break
+							end
+						else
+							break
+						end
+					end
+
+					local PathParts = {}
+					local ServiceMatch = StrMatch(BasePath, "^game%s*:%s*GetService%s*%(\"[^\"]+\"%)")
+					local ServiceCall = StrMatch(BasePath, "^game%s*:%s*GetService%s*%(\"[^\"]+\"%)") or "game"
+					local RemainingPath = StrSub(BasePath, #ServiceCall + 1)
+					for Part in StrGmatch(RemainingPath, 'FindFirstChild%s*%("%s*([^"]+)%s*"%)') do
+						TableInsert(PathParts, Part)
+					end
+
+					local TotalParts = #PathParts
+					local TargetParts = TotalParts - ParentCount
+
+					local ScriptPath = ServiceCall
+					for PartIndex = 1, TargetParts do
+						ScriptPath = ScriptPath .. ':FindFirstChild("' .. PathParts[PartIndex] .. '")'
+					end
+
+					Token.Value = ScriptPath
+
+					if ParentCount > 0 then
+						local ClearIndex = TokenIndex + 1
+						local ClearedParents = 0
+						while ClearIndex <= TokenCount and ClearedParents < ParentCount do
+							if (Tokens[ClearIndex].Type == "Symbol" or Tokens[ClearIndex].Type == "Operator") and Tokens[ClearIndex].Value == "." then
+								Tokens[ClearIndex].Value = ""
+							elseif Tokens[ClearIndex].Type == "Identifier" and Tokens[ClearIndex].Value == "Parent" then
+								Tokens[ClearIndex].Value = ""
+								ClearedParents = ClearedParents + 1
+							elseif Tokens[ClearIndex].Type == "Whitespace" then
+								Tokens[ClearIndex].Value = ""
+							end
+							ClearIndex = ClearIndex + 1
+						end
+					end
+				end
+			else
+				local Name = Token.Value
+				local Replacement = Variables[Name]
+				if Replacement and Replacement ~= "nil" and Replacement ~= "" then
+					local IsAfterDot = false
+					local PrevIndex = TokenIndex - 1
+					while PrevIndex >= 1 and Tokens[PrevIndex].Type == "Whitespace" do
+						PrevIndex = PrevIndex - 1
+					end
+					if PrevIndex >= 1 and (Tokens[PrevIndex].Type == "Symbol" or Tokens[PrevIndex].Type == "Operator") and (Tokens[PrevIndex].Value == "." or Tokens[PrevIndex].Value == ":") then
+						IsAfterDot = true
+					end
+
+					if not IsAfterDot then
+						local NextIndex = TokenIndex + 1
+						while NextIndex <= TokenCount and Tokens[NextIndex].Type == "Whitespace" do
+							NextIndex = NextIndex + 1
+						end
+
+						local ShouldReplace = true
+						if NextIndex <= TokenCount and Tokens[NextIndex].Type == "Symbol" and Tokens[NextIndex].Value == "(" then
+							if Name == "WaitForChild" or Name == "FindFirstChild" then
+								ShouldReplace = false
+							end
+						end
+
+						if ShouldReplace then
+							local Parent, Child = StrMatch(Replacement, "^(.*)%.([%a_][%w_]*)$")
+							if Parent and Child then
+								local ResolvedParent = ResolveVariables(Parent, Variables)
+								local FullPath = ResolvedParent .. "." .. Child
+								local PathTokens = Tokenize(FullPath)
+								if ValidatePath(PathTokens) then
+									Token.Value = OptimizeGetService(FullPath)
+								else
+									Token.Value = FullPath
+								end
+							else
+								local Resolved = ResolveVariables(Replacement, Variables)
+								local ResolvedTokens = Tokenize(Resolved)
+								if ValidatePath(ResolvedTokens) then
+									Token.Value = OptimizeGetService(Resolved)
+								else
+									Token.Value = Resolved
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		TokenIndex = TokenIndex + 1
+	end
+
+	local Output = RemoveComments(Tokens)
+
+	Output = StrReplace(Output, "([%w_]+)%s*:%s*FindFirstChild%s*%((.-)%)", function(Obj, Arg)
+		local Unquoted = UnquoteString(Arg)
+		if Unquoted and StrMatch(Unquoted, "^[%a_][%w_]*$") then
+			return Obj .. ':FindFirstChild("' .. Unquoted .. '")'
+		end
+	end)
+
+	Output = StrReplace(Output, '([%w_\"%)]+)%.([%a_][%w_]*)', function(Left, Right)
+		if Right == "FireServer" or Right == "InvokeServer" or Right == "Fire" or Right == "Invoke" then
+			return Left .. ":" .. Right
+		end
+
+		local Properties = {
+			Name = true, ClassName = true, Parent = true, Value = true,
+			UserId = true, Character = true, Team = true, Position = true,
+			LocalPlayer = true, Hit = true, CFrame = true, Size = true,
+			Color = true, Transparency = true, Anchored = true, CanCollide = true,
+			Humanoid = true, HumanoidRootPart = true, Velocity = true, Health = true,
+			MaxHealth = true, BodyVelocity = true, Backpack = true, PlayerGui = true
+		}
+		if Properties[Right] then
+			return Left .. "." .. Right
+		end
+
+		local LeftTokens = Tokenize(Left)
+		if #LeftTokens > 0 then
+			local LastToken = LeftTokens[#LeftTokens]
+			if LastToken.Value == ")" or LastToken.Value == "]" then
+				return Left .. "." .. Right
+			end
+		end
+
+		if TypeNames[Left] or Left == "pairs" or Left == "ipairs" or Left == "next" then
+			return Left .. "." .. Right
+		end
+
+		return Left .. ':FindFirstChild("' .. Right .. '")'
+	end)
+
+	Output = StrReplace(Output, "Color3%.new%s*%(%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*%)", function(R, G, B)
+		if ToNum(R) > 1 or ToNum(G) > 1 or ToNum(B) > 1 then
+			return "Color3.fromRGB(" .. R .. ", " .. G .. ", " .. B .. ")"
+		end
+	end)
+
+	return Output
+end
+
+local function SimplifyCode(Code: string): string
+	return StrReplace(Code, "WaitForChild", "FindFirstChild")
+end
+
+local function AnalyzeScript(ScriptObj: Instance)
+	if ScriptCache[ScriptObj] then return end
+
+	local InStudio = RunService:IsStudio(RunService)
+	local Success, Source = PCall(function()
+		return InStudio and ScriptObj.Source or decompile(ScriptObj)
+	end)
+
+	if not Success or RawType(Source) ~= "string" or Source == "" then return end
+
+	if Source:find("Instance%.new", 1, true) then
+		ScriptCache[ScriptObj] = { Extracted = {}, Source = Source }
+		return
+	end
+
+	local Variables = {}
+	local LoopTargets = {}
+	local Extracted = {}
+	local FunctionParams = {}
+	local FunctionArgs = {}
+
+	local BasePath = OptimizeGetService(GetInstancePath(ScriptObj))
+	local Lines = Source:split("\n")
+
+	local ClientEventParams = {}
+	for _, Line in IPairs(Lines) do
+		local Clean = Line:gsub("%-%-.*$", "")
+		for Params in Clean:gmatch("OnClientEvent%s*:[Cc]onnect%s*%(%s*function%s*%((.-)%)") do
+			for Param in Params:gmatch("[%a_][%w_]*") do
+				ClientEventParams[Param] = true
+			end
+		end
+	end
+
+	local function UsesClientEvent(Code: string): boolean
+		local Args = Code:match(":[Ff]ire%s*%((.*)%)")
+			or Code:match(":[Ii]nvoke%s*%((.*)%)")
+			or Code:match(":[Ff]ire[Ss]erver%s*%((.*)%)")
+			or Code:match(":[Ii]nvoke[Ss]erver%s*%((.*)%)")
+		
+		if not Args then return false end
+		for Word in Args:gmatch("[%a_][%w_]*") do
+			if ClientEventParams[Word] then
+				return true
+			end
+		end
+		return false
+	end
+
+	for _, Line in IPairs(Lines) do
+		local Trimmed = Line:match("^%s*(.-)%s*$") or ""
+		if Trimmed:sub(1, 2) == "--" then continue end
+
+		local FuncName, RawParams = Trimmed:match("^local%s+function%s+([%a_][%w_]*)%s*%((.-)%)")
+		if not FuncName then
+			FuncName, RawParams = Trimmed:match("^function%s+([%a_][%w_]*)%s*%((.-)%)")
+		end
+
+		if FuncName and RawParams then
+			local Params = {}
+			for Param in RawParams:gmatch("[%a_][%w_]*") do
+				TableInsert(Params, Param)
+			end
+			FunctionParams[FuncName] = Params
+		else
+			local Calls = FindCalls(Trimmed)
+			for _, Call in IPairs(Calls) do
+				if not GlobalNames[Call.name] and Call.name ~= "function" and Call.name ~= "local" and Call.name ~= "if" and Call.name ~= "elseif" then
+					FunctionArgs[Call.name] = SplitArguments(Call.args)
+				end
+			end
+		end
+	end
+
+	for FuncName, Params in Pairs(FunctionParams) do
+		local Args = FunctionArgs[FuncName]
+		if Args then
+			for Index, Param in IPairs(Params) do
+				local Arg = Args[Index]
+				if Arg and Arg ~= "" then
+					Variables[Param] = Arg
+				end
+			end
+		end
+	end
+
+	local FunctionBodies = {}
+	local CurrentFunc = nil
+	local InBlockComment = false
+
+	for _, Line in IPairs(Lines) do
+		local Trimmed = Line:match("^%s*(.-)%s*$") or ""
+
+		if not InBlockComment then
+			Trimmed = Trimmed:gsub("%-%-%[%[.-%]%]", "")
+		end
+
+		if not InBlockComment and Trimmed:find("%-%-%[%[") then
+			InBlockComment = true
+			continue
+		end
+
+		if InBlockComment then
+			if Trimmed:find("%]%]") then
+				InBlockComment = false
+			end
+			continue
+		end
+
+		local DeclFunc = Trimmed:match("^local%s+function%s+([%a_][%w_]*)") or Trimmed:match("^function%s+([%a_][%w_]*)")
+
+		if DeclFunc then
+			CurrentFunc = DeclFunc
+			FunctionBodies[CurrentFunc] = {}
+			continue
+		end
+
+		if CurrentFunc and Trimmed == "end" then
+			CurrentFunc = nil
+			continue
+		end
+
+		if CurrentFunc then
+			TableInsert(FunctionBodies[CurrentFunc], Line)
+			continue
+		end
+
+		local VarName, VarValue = Trimmed:match("^%s*local%s+([%a_][%w_]*)%s*=%s*(.+)")
+		if VarName and VarValue then
+			Variables[VarName] = VarValue:gsub("%-%-.*$", ""):match("^%s*(.-)%s*$")
+		else
+			local ReassignName, ReassignValue = Trimmed:match("^%s*([%a_][%w_]*)%s*=%s*(.+)")
+			if ReassignName and Variables[ReassignName] then
+				Variables[ReassignName] = ReassignValue:gsub("%-%-.*$", ""):match("^%s*(.-)%s*$")
+			end
+
+			local MultiVarDecl = Trimmed:match("^%s*local%s+([%a_][%w_*,%s]*)$")
+			if MultiVarDecl then
+				for Var in MultiVarDecl:gmatch("[%a_][%w_]*") do
+					Variables[Var] = Variables[Var] or ""
+				end
+			end
+		end
+
+		local LoopVar, LoopIter = Trimmed:match("^%s*for%s+([%a_][%w_*,%s]*)%s+in%s+(.+)$")
+		if LoopVar and LoopIter then
+			local PrimaryVar = LoopVar:match(",%s*([%a_][%w_]*)$")
+			if PrimaryVar then
+				local IteratorFunc =
+					LoopIter:match("^[g]?[p]?airs%s*%((.+)%)%s*do%s*$")
+					or LoopIter:match("^next%s*,%s*(.+)%s*do%s*$")
+					or LoopIter:match("^(.+)%s*do%s*$")
+
+				if IteratorFunc then
+					local ResolvedIter = ResolveVariables(IteratorFunc, Variables)
+					if ResolvedIter:match("%)%s*$")
+						or ResolvedIter:match("%s*GetChildren%s*$")
+						or ResolvedIter:match("%s*GetPlayers%s*$")
+						or ResolvedIter:match("%s*children%s*$") then
+						Variables[PrimaryVar] = PrimaryVar
+						LoopTargets[PrimaryVar] = ResolvedIter
+					else
+						Variables[PrimaryVar] = ResolvedIter
+					end
+				end
+			end
+		end
+
+		local CalledFunc = Trimmed:match("^([%a_][%w_]*)%s*%(")
+		if CalledFunc and FunctionBodies[CalledFunc] then
+			local RawArgs = Trimmed:match("^[%a_][%w_]*%s*%((.+)%)") or ""
+			local PassedArgs = {}
+
+			for Arg in RawArgs:gmatch("[^,%s]+") do
+				TableInsert(PassedArgs, Arg)
+			end
+
+			for _, BodyLine in IPairs(FunctionBodies[CalledFunc]) do
+				local ProcessedLine = BodyLine
+				local Params = FunctionParams[CalledFunc] or {}
+
+				for Index, ParamName in IPairs(Params) do
+					local Replacement = PassedArgs[Index] or ""
+
+					if ParamName == "..." then
+						local Varargs = {}
+						for VarIndex = Index, #PassedArgs do
+							TableInsert(Varargs, PassedArgs[VarIndex])
+						end
+						Replacement = table.concat(Varargs, ", ")
+					end
+
+					local SafeParam = (ParamName:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%1"))
+					local SafeReplacement = (Replacement:gsub("%%", "%%%%"))
+
+					ProcessedLine = ProcessedLine:gsub(
+						"([%s,%(])" .. SafeParam .. "([%s,%)])",
+						"%1" .. SafeReplacement .. "%2"
+					)
+				end
+
+				for _, Trigger in IPairs(RemoteTriggers) do
+					if ProcessedLine:find(Trigger, 1, true) then
+						local CleanedLine = ProcessedLine:gsub("%-%-.*$", "")
+						local ResolvedPayload = OptimizeScript(CleanedLine, Variables, BasePath):match("^%s*(.-)%s*$")
+						
+						if not UsesClientEvent(ResolvedPayload) then
+							TableInsert(Extracted, ResolvedPayload)
+						end
+						break
+					end
+				end
+			end
+			continue
+		end
+
+		for _, Trigger in IPairs(RemoteTriggers) do
+			if Line:find(Trigger, 1, true) then
+				local CleanedLine = Line:gsub("%-%-.*$", "")
+				local ResolvedPayload = OptimizeScript(CleanedLine, Variables, BasePath):match("^%s*(.-)%s*$")
+
+				if UsesClientEvent(ResolvedPayload) then
+					break
+				end
+
+				local TargetVar =
+					ResolvedPayload:match(":FireServer%s*%(([%a_][%w_]*)")
+					or ResolvedPayload:match(":InvokeServer%s*%(([%a_][%w_]*)")
+					or ResolvedPayload:match(":Fire%s*%(([%a_][%w_]*)")
+					or ResolvedPayload:match(":Invoke%s*%(([%a_][%w_]*)")
+
+				if TargetVar and LoopTargets[TargetVar] and not ResolvedPayload:find("ipairs", 1, true) then
+					local WrappedCode = ("do\n\tfor _, %s in ipairs(%s) do\n\t\t%s\n\tend\nend"):format(
+						TargetVar,
+						LoopTargets[TargetVar],
+						ResolvedPayload
+					)
+					TableInsert(Extracted, WrappedCode)
+				else
+					TableInsert(Extracted, ResolvedPayload)
+				end
+				break
+			end
+		end
+	end
+
+	ScriptCache[ScriptObj] = {
+		Extracted = Extracted,
+		Source = Source
+	}
+end
+
+local function ClearPanel(Panel: Instance)
+	for _, Child in IPairs(Panel:GetChildren()) do
+		if Child:IsA("Frame") then
+			Child:Destroy()
+		end
+	end
+end
+
+local function ClearIndicators(Container: Instance)
+	ClearPanel(Container)
+	Container.Size = UDim2.new(0, 5, 0, 18)
+	local Indicator = Create("Frame", {
+		Name = "IndicatorCircle",
+		BackgroundColor3 = Color3.fromRGB(150, 150, 150),
+		BorderSizePixel = 0,
+		Size = UDim2.new(0, 5, 0, 5),
+		ZIndex = 3
+	})
+	Create("UICorner", {CornerRadius = UDim.new(0.5, 0), Parent = Indicator})
+	Indicator.Parent = Container
+end
+
+local function UpdateSearch()
+	local Query = StrLower(SearchBox.Text)
+	if Query == "" then
+		for _, Item in IPairs(ScriptList) do
+			Item.Log.Visible = true
+			Item.Log.LayoutOrder = Item.OriginalOrder
+		end
+		return
+	end
+
+	for _, Item in IPairs(ScriptList) do
+		local Relevance = SearchRelevance(Item, Query)
+		if Relevance > 0 then
+			Item.Log.Visible = true
+			Item.Log.LayoutOrder = -Relevance
+		else
+			Item.Log.Visible = false
+		end
+	end
+end
+
+TableInsert(AllConnections, SearchBox:GetPropertyChangedSignal("Text"):Connect(UpdateSearch))
+
+local function GetDisplayName(ScriptName: string, IsModule: boolean, Count: number): string
+	local Prefix = IsModule and "[M]" or "[LS]"
+	if Count == 0 then
+		return Prefix .. " " .. ScriptName
+	else
+		return Prefix .. " " .. ScriptName .. " (" .. (Count + 1) .. ")"
+	end
+end
+
+local function AddScript(ScriptObj: Instance)
+	if IsInCore(ScriptObj) then return end
+
+	for _, Item in IPairs(ScriptList) do
+		if Item.ScriptObj == ScriptObj then return end
+	end
+
+	local ScriptName = ScriptObj.Name
+	local IsModule = ScriptObj:IsA("ModuleScript")
+	local ExistingCount = 0
+	
+	for _, Item in IPairs(ScriptList) do
+		if Item.ScriptObj.Name == ScriptName then
+			ExistingCount = ExistingCount + 1
+		end
+	end
+
+	local DisplayName = GetDisplayName(ScriptName, IsModule, ExistingCount)
+
+	local Frame = Create("Frame", {
+		LayoutOrder = NextLayout,
+		Name = "RemoteTemplate",
+		Parent = ScriptsList,
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0, 132, 0, 22)
+	})
+
+	local IndicatorContainer = Create("Frame", {
+		Name = "IndicatorContainer",
+		Parent = Frame,
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 2, 0, 2),
+		Size = UDim2.new(0, 5, 0, 18),
+		ZIndex = 3
+	})
+
+	local IndicatorLayout = Create("UIListLayout", {
+		Parent = IndicatorContainer,
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Left,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 2)
+	})
+
+	ClearIndicators(IndicatorContainer)
+
+	local TextLabel = Create("TextLabel", {
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Name = "Text",
+		Parent = Frame,
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 12, 0, 2),
+		Size = UDim2.new(0, 116, 0, 18),
+		ZIndex = 2,
+		Font = Enum.Font.Gotham,
+		Text = DisplayName,
+		TextColor3 = Color3.fromRGB(220, 220, 220),
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left
+	})
+
+	local Button = Create("TextButton", {
+		Name = "Button",
+		Parent = Frame,
+		BackgroundColor3 = Color3.fromRGB(24, 24, 24),
+		BorderColor3 = Color3.fromRGB(40, 40, 40),
+		Position = UDim2.new(0, 0, 0, 2),
+		Size = UDim2.new(0, 132, 0, 18),
+		AutoButtonColor = false,
+		Font = Enum.Font.Gotham,
+		Text = "",
+		TextColor3 = Color3.new(0, 0, 0),
+		TextSize = 14
+	})
+	Create("UICorner", {CornerRadius = UDim.new(0, 3), Parent = Button})
+
+	local Item = {
+		ScriptObj = ScriptObj,
+		Log = Frame,
+		Button = Button,
+		TextLabel = TextLabel,
+		IndicatorContainer = IndicatorContainer,
+		GenScript = "Click to scan script events...",
+		FullScript = "",
+		OriginalOrder = NextLayout,
+		ScriptNameLower = StrLower(ScriptName),
+		LogNameLower = StrLower(DisplayName),
+		ModuleNameLower = IsModule and StrLower(ScriptName) or "",
+		IsSelected = false
+	}
+
+	TableInsert(ScriptList, Item)
+
+	table.sort(ScriptList, function(A, B)
+		if A.ScriptNameLower == B.ScriptNameLower then
+			local CountA = 0
+			local CountB = 0
+			for _, Script in IPairs(ScriptList) do
+				if Script.ScriptNameLower == A.ScriptNameLower then
+					CountA = CountA + 1
+				end
+				if Script.ScriptNameLower == B.ScriptNameLower then
+					CountB = CountB + 1
+				end
+			end
+			return CountA < CountB
+		end
+		return A.ScriptNameLower < B.ScriptNameLower
+	end)
+
+	for Index = 1, #ScriptList do
+		local Script = ScriptList[Index]
+		Script.Log.LayoutOrder = Index
+		Script.OriginalOrder = Index
+		local SameNameCount = 0
+		for PrevIndex = 1, Index - 1 do
+			if ScriptList[PrevIndex].ScriptNameLower == Script.ScriptNameLower then
+				SameNameCount = SameNameCount + 1
+			end
+		end
+		local UpdatedName = GetDisplayName(Script.ScriptObj.Name, Script.ScriptObj:IsA("ModuleScript"), SameNameCount)
+		Script.TextLabel.Text = UpdatedName
+		Script.LogNameLower = StrLower(UpdatedName)
+	end
+
+	local SearchQuery = StrLower(SearchBox.Text)
+	if SearchQuery ~= "" then
+		local Relevance = SearchRelevance(Item, SearchQuery)
+		Frame.Visible = Relevance > 0
+		if Relevance > 0 then
+			Frame.LayoutOrder = -Relevance
+		end
+	end
+
+	TableInsert(AllConnections, Button.MouseButton1Click:Connect(function()
+		if CurrentSelection then
+			local Previous = CurrentSelection
+			Previous.IsSelected = false
+			if Previous.Log then
+				if Previous.Button then
+					ApplyTween(Previous.Button, {BackgroundColor3 = COLOR_NORMAL})
+				end
+				if Previous.IndicatorContainer then
+					ClearIndicators(Previous.IndicatorContainer)
+					if Previous.TextLabel then
+						Previous.TextLabel.Position = UDim2.new(0, 12, 0, 2)
+						Previous.TextLabel.Size = UDim2.new(0, 136, 0, 18)
+					end
+				end
+			end
+			if CurrentSelection == Item then
+				CurrentSelection = nil
+				EventsOutput.Text = "Select a script from the scripts logs."
+				EventsView.CanvasSize = UDim2.fromOffset(0, 0)
+				return
+			end
+		end
+
+		CurrentSelection = Item
+		Item.IsSelected = true
+		ApplyTween(Button, {BackgroundColor3 = COLOR_SELECTED})
+
+		local function DisplayEvents(CachedData)
+			ClearPanel(IndicatorContainer)
+			local EventTypes = {}
+			
+			for _, Line in IPairs(CachedData.Extracted or {}) do
+				if StrFind(Line, "FireServer", 1, true) then
+					EventTypes[":FireServer"] = Color3.fromRGB(250, 210, 50)
+				elseif StrFind(Line, "InvokeServer", 1, true) then
+					EventTypes[":InvokeServer"] = Color3.fromRGB(240, 100, 240)
+				elseif StrFind(Line, "Fire", 1, true) then
+					EventTypes[":Fire"] = Color3.fromRGB(50, 220, 110)
+				elseif StrFind(Line, "Invoke", 1, true) then
+					EventTypes[":Invoke"] = Color3.fromRGB(255, 100, 100)
+				end
+			end
+
+			local TypeCount = 0
+			for EventType, Color in Pairs(EventTypes) do
+				TypeCount = TypeCount + 1
+				local Circle = Create("Frame", {
+					Name = "IndicatorCircle",
+					BackgroundColor3 = Color,
+					BorderSizePixel = 0,
+					Size = UDim2.new(0, 5, 0, 5),
+					ZIndex = 3
+				})
+				Create("UICorner", {CornerRadius = UDim.new(0.5, 0), Parent = Circle})
+				Circle.Parent = IndicatorContainer
+			end
+
+			if TypeCount > 0 then
+				local Width = (TypeCount * 5) + ((TypeCount - 1) * 2)
+				IndicatorContainer.Size = UDim2.new(0, Width, 0, 18)
+				TextLabel.Position = UDim2.new(0, 8 + Width, 0, 2)
+				TextLabel.Size = UDim2.new(0, 144 - Width, 0, 18)
+			else
+				IndicatorContainer.Size = UDim2.new(0, 5, 0, 18)
+				TextLabel.Position = UDim2.new(0, 12, 0, 2)
+				TextLabel.Size = UDim2.new(0, 136, 0, 18)
+
+				local NoEvents = Create("Frame", {
+					Name = "IndicatorCircle",
+					BackgroundColor3 = Color3.fromRGB(230, 40, 40),
+					BorderSizePixel = 0,
+					Size = UDim2.new(0, 5, 0, 5),
+					ZIndex = 3
+				})
+				Create("UICorner", {CornerRadius = UDim.new(0.5, 0), Parent = NoEvents})
+				NoEvents.Parent = IndicatorContainer
+			end
+		end
+
+		if not ScriptCache[ScriptObj] then
+			AnalyzeScript(ScriptObj)
+			local CachedData = ScriptCache[ScriptObj]
+			if CachedData then
+				Item.FullScript = CachedData.Source
+				
+				local Lines = {}
+				if #(CachedData.Extracted or {}) > 0 then
+					for _, Line in IPairs(CachedData.Extracted) do
+						local Label = ""
+						if StrFind(Line, "FireServer", 1, true) then
+							Label = "-- FireServer() Call"
+						elseif StrFind(Line, "InvokeServer", 1, true) then
+							Label = "-- InvokeServer() Call"
+						elseif StrFind(Line, "Fire", 1, true) then
+							Label = "-- Fire() Call"
+						elseif StrFind(Line, "Invoke", 1, true) then
+							Label = "-- Invoke() Call"
+						else
+							Label = "-- Event Call"
+						end
+						TableInsert(Lines, Label .. "\n" .. Line)
+					end
+				end
+
+				if #Lines > 0 then
+					Item.GenScript = table.concat(Lines, "\n\n")
+					
+					if CurrentSelection == Item then
+						DisplayEvents(CachedData)
+						EventsOutput.Text = SimplifyCode(Item.GenScript)
+						local TextSize = TextService:GetTextSize(EventsOutput.Text, EventsOutput.TextSize, EventsOutput.Font, Vector2.new(EventsView.AbsoluteSize.X - 12, math.huge))
+						EventsView.CanvasSize = UDim2.fromOffset(0, TextSize.Y + 16)
+					end
+				else
+					Item.GenScript = "-- No events found in this script."
+					if CurrentSelection == Item then
+						DisplayEvents({Extracted = {}})
+						EventsOutput.Text = Item.GenScript
+						local TextSize = TextService:GetTextSize(EventsOutput.Text, EventsOutput.TextSize, EventsOutput.Font, Vector2.new(EventsView.AbsoluteSize.X - 12, math.huge))
+						EventsView.CanvasSize = UDim2.fromOffset(0, TextSize.Y + 16)
+					end
+				end
+			else
+				Item.GenScript = "-- Failed to decompile this script."
+				if CurrentSelection == Item then
+					DisplayEvents({Extracted = {}})
+					EventsOutput.Text = Item.GenScript
+					local TextSize = TextService:GetTextSize(EventsOutput.Text, EventsOutput.TextSize, EventsOutput.Font, Vector2.new(EventsView.AbsoluteSize.X - 12, math.huge))
+					EventsView.CanvasSize = UDim2.fromOffset(0, TextSize.Y + 16)
+				end
+			end
+		else
+			local CachedData = ScriptCache[ScriptObj]
+			
+			local Lines = {}
+			if #(CachedData.Extracted or {}) > 0 then
+				for _, Line in IPairs(CachedData.Extracted) do
+					local Label = ""
+					if StrFind(Line, "FireServer", 1, true) then
+						Label = "-- FireServer() Call"
+					elseif StrFind(Line, "InvokeServer", 1, true) then
+						Label = "-- InvokeServer() Call"
+					elseif StrFind(Line, "Fire", 1, true) then
+						Label = "-- Fire() Call"
+					elseif StrFind(Line, "Invoke", 1, true) then
+						Label = "-- Invoke() Call"
+					else
+						Label = "-- Event Call"
+					end
+					TableInsert(Lines, Label .. "\n" .. Line)
+				end
+			end
+
+			Item.GenScript = #Lines > 0 and table.concat(Lines, "\n\n") or "-- No events found in this script."
+			EventsOutput.Text = SimplifyCode(Item.GenScript)
+			local TextSize = TextService:GetTextSize(EventsOutput.Text, EventsOutput.TextSize, EventsOutput.Font, Vector2.new(EventsView.AbsoluteSize.X - 12, math.huge))
+			EventsView.CanvasSize = UDim2.fromOffset(0, TextSize.Y + 16)
+			DisplayEvents(CachedData)
+		end
+	end))
+
+	TableInsert(AllConnections, Button.MouseEnter:Connect(function()
+		if Item.IsSelected then
+			ApplyTween(Button, {BackgroundColor3 = COLOR_SELECTED_HOVER})
+		else
+			ApplyTween(Button, {BackgroundColor3 = COLOR_HOVER})
+		end
+		ApplyTween(TextLabel, {TextColor3 = Color3.fromRGB(255, 255, 255)})
+	end))
+
+	TableInsert(AllConnections, Button.MouseLeave:Connect(function()
+		if Item.IsSelected then
+			ApplyTween(Button, {BackgroundColor3 = COLOR_SELECTED})
+		else
+			ApplyTween(Button, {BackgroundColor3 = COLOR_NORMAL})
+		end
+		ApplyTween(TextLabel, {TextColor3 = Color3.fromRGB(220, 220, 220)})
+	end))
+
+	NextLayout = NextLayout - 1
+
+	TableInsert(AllConnections, ScriptsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		ScriptsList.CanvasSize = UDim2.fromOffset(0, ScriptsLayout.AbsoluteContentSize.Y)
+	end))
+end
+
+local function RemoveScript(ScriptObj: Instance)
+	for Index, Item in IPairs(ScriptList) do
+		if Item.ScriptObj == ScriptObj then
+			if CurrentSelection == Item then
+				CurrentSelection = nil
+				EventsOutput.Text = "Select a script from the scripts logs."
+				EventsView.CanvasSize = UDim2.fromOffset(0, 0)
+			end
+			if Item.Log then
+				Item.Log:Destroy()
+			end
+			TableRemove(ScriptList, Index)
+			for UpdateIndex = Index, #ScriptList do
+				ScriptList[UpdateIndex].Log.LayoutOrder = UpdateIndex
+				ScriptList[UpdateIndex].OriginalOrder = UpdateIndex
+				local SameNameCount = 0
+				for PrevIndex = 1, UpdateIndex - 1 do
+					if ScriptList[PrevIndex].ScriptNameLower == ScriptList[UpdateIndex].ScriptNameLower then
+						SameNameCount = SameNameCount + 1
+					end
+				end
+				local UpdatedName = GetDisplayName(ScriptList[UpdateIndex].ScriptObj.Name, ScriptList[UpdateIndex].ScriptObj:IsA("ModuleScript"), SameNameCount)
+				ScriptList[UpdateIndex].TextLabel.Text = UpdatedName
+				ScriptList[UpdateIndex].LogNameLower = StrLower(UpdatedName)
+			end
+			break
+		end
+	end
+end
+
+CreateButton("Copy", "Copies extracted data to clipboard.", Color3.fromRGB(130, 215, 130), Color3.fromRGB(160, 255, 160), function()
+	if not CurrentSelection or EventsOutput.Text == "" or EventsOutput.Text == "Select a script from script logs." then
+		AddLog("No script selected from script logs.")
+		return
+	end
+	local ClipboardFunc = toclipboard or setclipboard
+	if ClipboardFunc then
+		ClipboardFunc(EventsOutput.Text)
+		AddLog("Copied extracted data to clipboard.")
+	else
+		AddLog("Error: Clipboard function not supported.")
+	end
+end)
+
+CreateButton("Clear", "Clears script logs.", Color3.fromRGB(215, 100, 100), Color3.fromRGB(255, 120, 120), function()
+	for _, Item in IPairs(ScriptList) do
+		if Item.Log then Item.Log:Destroy() end
+	end
+	TableClear(ScriptList)
+	TableClear(ScriptCache)
+	CurrentSelection = nil
+	EventsOutput.Text = "Select a script from script logs."
+	EventsView.CanvasSize = UDim2.fromOffset(0, 0)
+	ScriptsList.CanvasSize = UDim2.fromOffset(0, 0)
+	NextLayout = math.huge
+	SearchBox.Text = ""
+	AddLog("Script logs cleared.")
+end)
+
+local function RefreshScripts()
+	for _, Item in IPairs(ScriptList) do
+		if Item.Log then Item.Log:Destroy() end
+	end
+
+	TableClear(ScriptList)
+	TableClear(ScriptCache)
+
+	CurrentSelection = nil
+	EventsView.CanvasSize = UDim2.fromOffset(0, 0)
+	ScriptsList.CanvasSize = UDim2.fromOffset(0, 0)
+	NextLayout = math.huge
+
+	local Found = {}
+	local SearchSuccess = PCall(function()
+		for _, Service in IPairs(game:GetChildren()) do
+			local ServiceClass = Service.ClassName
+			if ServiceClass ~= "CoreGui" and ServiceClass ~= "CorePackages" and ServiceClass ~= "LocalSaves" and ServiceClass ~= "StarterGui" then
+				for _, Descendant in IPairs(Service:GetDescendants()) do
+					if not IsInCore(Descendant) then
+						local IsLocalScript = Descendant:IsA("LocalScript")
+						local IsModuleScript = Descendant:IsA("ModuleScript")
+						
+						if IsLocalScript and not ExcludedScriptNames[Descendant.Name] then
+							TableInsert(Found, Descendant)
+						elseif IsModuleScript and not ExcludedModuleNames[Descendant.Name] then
+							TableInsert(Found, Descendant)
+						end
+					end
+				end
+			end
+		end
+	end)
+
+	if #Found == 0 then
+		EventsOutput.Text = "No scripts found inside the game."
+		AddLog("No scripts found.")
+		return
+	end
+
+	for _, FoundScript in IPairs(Found) do
+		AddScript(FoundScript)
+	end
+
+	EventsOutput.Text = "Select a script from script logs."
+	UpdateSearch()
+	AddLog("Refreshed script logs.")
+end
+
+CreateButton("Refresh", "Refreshes script logs.", Color3.fromRGB(235, 185, 80), Color3.fromRGB(255, 215, 100), RefreshScripts)
+
+local function ExecuteExtracted(CodeString: string)
+	if not CodeString or CodeString == "" then return end
+
+	local Payloads = {}
+	local BlockStack = {}
+	local BlockDepth = 0
+
+	local function HasRemoteTrigger(Code: string): boolean
+		for _, Trigger in IPairs(RemoteTriggers) do
+			if StrFind(Code, Trigger, 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	local CodeLines = {}
+	for Line in StrGmatch(CodeString, "[^\n]+") do
+		TableInsert(CodeLines, StrMatch(Line, "^%s*(.-)%s*$"))
+	end
+
+	local LineIndex = 1
+	while LineIndex <= #CodeLines do
+		local Line = CodeLines[LineIndex]
+		
+		if Line ~= "" and Line ~= "-- No events in this script found." and Line ~= "-- Failed to decompile this script." and not StrMatch(Line, "^%-%-") then
+			if StrMatch(Line, "%f[%a]do%f[%A]") or StrMatch(Line, "%f[%a]then%f[%A]") or StrMatch(Line, "^for%s") or StrMatch(Line, "^if%s") then
+				BlockDepth = BlockDepth + 1
+				TableInsert(BlockStack, Line)
+			elseif Line == "end" then
+				BlockDepth = BlockDepth - 1
+				TableInsert(BlockStack, Line)
+				
+				if BlockDepth == 0 then
+					local Block = table.concat(BlockStack, "\n")
+					if HasRemoteTrigger(Block) then
+						TableInsert(Payloads, Block)
+					end
+					BlockStack = {}
+				end
+			else
+				if BlockDepth > 0 then
+					TableInsert(BlockStack, Line)
+				elseif HasRemoteTrigger(Line) then
+					TableInsert(Payloads, Line)
+				end
+			end
+		end
+		LineIndex = LineIndex + 1
+	end
+
+	if #BlockStack > 0 then
+		local Block = table.concat(BlockStack, "\n")
+		if HasRemoteTrigger(Block) then
+			TableInsert(Payloads, Block)
+		end
+	end
+
+	local PCCall = PCCall or function(func, ...)
+    local success, result = pcall(func, ...)
+    return success, result
+end
+
+	if #Payloads == 0 then
+		local Simplified = SimplifyCode(CodeString)
+		Simplified = StrReplace(Simplified, "script%.", "scriptpath.")
+		local Compiled = loadstring(Simplified)
+		if Compiled then
+			PCCall(Compiled)
+		end
+		return
+	end
+
+	for _, Payload in IPairs(Payloads) do
+		local Simplified = SimplifyCode(Payload)
+		Simplified = StrReplace(Simplified, "script%.", "scriptpath.")
+		
+		local Compiled = loadstring(Simplified)
+		if Compiled then
+			task.spawn(function()
+				PCCall(Compiled)
+			end)
+		end
+	end
+end
+
+CreateButton("Execute", "Fires event calls.", Color3.fromRGB(165, 100, 225), Color3.fromRGB(200, 130, 255), function()
+	if not CurrentSelection or EventsOutput.Text == "" or EventsOutput.Text == "Select a script from script logs." or EventsOutput.Text == "Scanning script for events." then
+		AddLog("No script selected from script logs.")
+		return
+	end
+
+	local CodeToExecute = EventsOutput.Text
+	ExecuteExtracted(CodeToExecute)
+	AddLog("Event calls fired.")
+end)
+
+CreateButton("Edit", function()
+	return EventsOutput.TextEditable and "Stop editing" or "Edit data"
+end, Color3.fromRGB(80, 200, 215), Color3.fromRGB(110, 235, 255), function()
+	if not CurrentSelection or EventsOutput.Text == "" or EventsOutput.Text == "Select a script from script logs." then
+		AddLog("No script selected from script logs.")
+		return
+	end
+	
+	EventsOutput.TextEditable = not EventsOutput.TextEditable
+	if EventsOutput.TextEditable then
+		ApplyTween(EventsOutput, {TextColor3 = Color3.new(1, 1, 1)})
+		AddLog("Editing enabled.")
+	else
+		ApplyTween(EventsOutput, {TextColor3 = Color3.fromRGB(160, 160, 160)})
+		AddLog("Editing disabled.")
+	end
+end)
+
+CreateButton("Get Script", "Copies script to clipboard.", Color3.fromRGB(235, 140, 80), Color3.fromRGB(255, 175, 110), function()
+	if not CurrentSelection or not CurrentSelection.FullScript or CurrentSelection.FullScript == "" then
+		AddLog("No script selected from script logs.")
+		return
+	end
+	local ClipboardFunc = toclipboard or setclipboard
+	if ClipboardFunc then
+		ClipboardFunc(CurrentSelection.FullScript)
+		AddLog("Script copied to clipboard.")
+	else
+		AddLog("Error: Clipboard not supported.")
+	end
+end)
+
+local function WatchForChanges()
+	PCCall(function()
+		for _, Service in IPairs(game:GetChildren()) do
+			local ServiceClass = Service.ClassName
+			if ServiceClass ~= "CoreGui" and ServiceClass ~= "CorePackages" and ServiceClass ~= "LocalSaves" then
+				TableInsert(AllConnections, Service.DescendantAdded:Connect(function(Descendant)
+					if (Descendant:IsA("LocalScript") or Descendant:IsA("ModuleScript")) and not IsInCore(Descendant) then
+						AddScript(Descendant)
+					end
+				end))
+				TableInsert(AllConnections, Service.DescendantRemoving:Connect(function(Descendant)
+					if Descendant:IsA("LocalScript") or Descendant:IsA("ModuleScript") then
+						RemoveScript(Descendant)
+					end
+				end))
+			end
+		end
+	end)
+end
+
+RefreshScripts()
+WatchForChanges()
