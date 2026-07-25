@@ -1,20 +1,16 @@
 -- https://real-rblxscripts.github.io/load
-local blacklistedExecutors = {
-    ["solara"] = true,
-    ["xeno"] = true,
-}
-if identifyexecutor then
-
-    local rawName, version = identifyexecutor()
-    local currentExecutorName = string.lower(tostring(rawName))
-
-    if blacklistedExecutors[currentExecutorName] then
-        -- Kick the local player from the client side
-        local Players = game:Service("Players")
-        local localPlayer = Players.LocalPlayer
-        
-        if localPlayer then
-            localPlayer:Kick("Unsupported!")
+local blacklistedExecutors = { "solara", "xeno", "vega x" }
+local getExec = identifyexecutor or getexecutorname or getexecname
+if getExec then
+    local rawName = tostring(getExec()):lower()
+    for _, name in ipairs(blacklistedExecutors) do
+        if rawName:find(name) then
+            local Players = game:GetService("Players")
+            local localPlayer = Players.LocalPlayer
+            if localPlayer then
+                localPlayer:Kick("RBLXScripts> Unsupported Executor!")
+            end
+            break
         end
     end
 end
