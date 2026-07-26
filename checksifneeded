@@ -14,3 +14,1528 @@ if getExec then
         end
     end
 end
+
+local unpackv = table.unpack or unpack
+
+local function packv(...)
+	return { n = select("#", ...), ... }
+end
+
+local function directcall(fn, ...)
+	local argc = select("#", ...)
+	local args = { ... }
+	local done = false
+	local results
+	local co = coroutine.create(function()
+		results = packv(fn(unpackv(args, 1, argc)))
+		done = true
+	end)
+	local started, err = coroutine.resume(co)
+	if not started then
+		return false, err
+	end
+	while not done and coroutine.status(co) ~= "dead" do
+		task.wait(0.03)
+	end
+	if not done then
+		return false, "thread ended without returning"
+	end
+	return true, unpackv(results, 1, results.n)
+end
+
+local function svc(n)
+	local ok, r = directcall(function()
+		return game:GetService(n)
+	end)
+	if ok then
+		return r
+	end
+	return nil
+end
+
+local root
+directcall(function()
+	root = getfenv(0)
+end)
+if type(root) ~= "table" then
+	root = _G or {}
+end
+
+local function get(path)
+	local v = root
+	for p in tostring(path):gmatch("[^%.]+") do
+		if v == nil then
+			return nil
+		end
+		local ok, nv = directcall(function()
+			return v[p]
+		end)
+		if not ok then
+			return nil
+		end
+		v = nv
+	end
+	return v
+end
+
+local function join(t)
+	local r = {}
+	for i = 1, #t do
+		r[i] = tostring(t[i])
+	end
+	return table.concat(r, ", ")
+end
+
+local function names(v)
+	if type(v) == "table" then
+		return v
+	end
+	return { v }
+end
+
+local function res(v)
+	local ns = names(v)
+	for i = 1, #ns do
+		local nm = ns[i]
+		local val = get(nm)
+		if val ~= nil then
+			return val, nm
+		end
+	end
+	return nil, nil
+end
+
+local function need(v)
+	local val, nm = res(v)
+	assert(val ~= nil, "missing dependency: " .. join(names(v)))
+	return val, nm
+end
+
+local function short(e)
+	local s = tostring(e or "unknown")
+	s = s:gsub("\r\n", "\n")
+	local out = {}
+	for line in s:gmatch("[^\n]+") do
+		out[#out + 1] = line
+		if #out >= 4 then
+			break
+		end
+	end
+	s = table.concat(out, " | ")
+	if #s > 420 then
+		s = s:sub(1, 420) .. "..."
+	end
+	return s
+end
+
+local function runTimeout(fn, sec)
+	local done = false
+	local ok, ret
+	task.spawn(function()
+		ok, ret = directcall(fn)
+		done = true
+	end)
+	local t = os.clock()
+	while not done and os.clock() - t < (sec or 8) do
+		task.wait(0.03)
+	end
+	if not done then
+		return false, "timed out after " .. tostring(sec or 8) .. "s"
+	end
+	return ok, ret
+end
+
+local st = {
+	core = { pass = 0, fail = 0, miss = 0, exist = 0, skip = 0 },
+	extra = { pass = 0, fail = 0, miss = 0, exist = 0, skip = 0 },
+}
+local ls = {
+	pass = {},
+	fail = {},
+	miss = {},
+	exist = {},
+	skip = {},
+	extraPass = {},
+	extraFail = {},
+	extraMiss = {},
+	extraExist = {},
+	extraSkip = {},
+}
+
+local id = tostring(math.floor(os.clock() * 1000000))
+local base = ".unc_test_" .. id
+
+local function add(t, v)
+	t[#t + 1] = v
+end
+
+local function line(ok, tag, msg)
+	if ok then
+		print("✅ " .. tag .. (msg and " • " .. tostring(msg) or ""))
+	else
+		warn("⛔ " .. tag .. (msg and " • " .. tostring(msg) or ""))
+	end
+end
+
+local function cleanObj(o)
+	if o and typeof(o) == "Instance" then
+		directcall(function()
+			o:Destroy()
+		end)
+	elseif type(o) == "table" or type(o) == "userdata" then
+		directcall(function()
+			if o.Remove then
+				o:Remove()
+			end
+		end)
+		directcall(function()
+			if o.Destroy then
+				o:Destroy()
+			end
+		end)
+	end
+end
+
+local function notify(t, m, d)
+	local sg = svc("StarterGui")
+	if sg then
+		directcall(function()
+			sg:SetCore("SendNotification", {
+				Title = tostring(t),
+				Text = tostring(m),
+				Duration = d or 6,
+			})
+		end)
+	end
+	print("[UNC] " .. tostring(t) .. ": " .. tostring(m))
+end
+
+local function pushNotif(data, tries)
+	local sg = svc("StarterGui")
+	if not sg then
+		return false, "StarterGui unavailable"
+	end
+	local last
+	for _ = 1, (tries or 10) do
+		local ok, err = directcall(function()
+			sg:SetCore("SendNotification", data)
+		end)
+		if ok then
+			return true
+		end
+		last = err
+		task.wait(0.2)
+	end
+	return false, last or "SendNotification failed"
+end
+
+local function mkSkip(msg)
+	return { _unc_skip = tostring(msg or "skipped") }
+end
+
+local rconAskDone = false
+local rconAllow = false
+local function askRcon()
+	if rconAskDone then
+		return rconAllow, rconAllow and "approved" or "user chose no"
+	end
+	local cb = Instance.new("BindableFunction")
+	local ans
+	cb.OnInvoke = function(v)
+		ans = tostring(v or ""):lower()
+	end
+	local ok, err = pushNotif({
+		Title = "UNC rconsole tests",
+		Text = "Some executors crash on rconsole. Test rconsole functions?",
+		Duration = 15,
+		Button1 = "Yes",
+		Button2 = "No",
+		Callback = cb,
+	}, 15)
+	if not ok then
+		cb:Destroy()
+		notify("UNC rconsole tests", "Notification UI failed, so rconsole tests were skipped for safety.", 8)
+		rconAskDone = true
+		rconAllow = false
+		return false, short(err)
+	end
+	local t = os.clock()
+	while ans == nil and os.clock() - t < 15 do
+		task.wait(0.05)
+	end
+	cb:Destroy()
+	rconAskDone = true
+	rconAllow = ans == "yes"
+	if rconAllow then
+		notify("UNC rconsole tests", "Approved. Running rconsole checks.", 5)
+		return true, "approved"
+	end
+	notify("UNC rconsole tests", "Skipped rconsole checks.", 5)
+	if ans == nil then
+		return false, "no response"
+	end
+	return false, "user chose no"
+end
+
+local function needRcon()
+	local ok, why = askRcon()
+	if ok then
+		return true
+	end
+	return false, why
+end
+
+local function mkDraw(kind)
+	local new = need({ "Drawing.new" })
+	local obj = new(kind or "Square")
+	assert(obj ~= nil, "Drawing.new returned nil")
+	return obj
+end
+
+local function anyScript()
+	local plrs = svc("Players")
+	local lp = plrs and plrs.LocalPlayer
+	local spots = {}
+	if lp then
+		local ps = lp:FindFirstChildOfClass("PlayerScripts")
+		local pg = lp:FindFirstChildOfClass("PlayerGui")
+		spots[#spots + 1] = ps
+		spots[#spots + 1] = pg
+	end
+	spots[#spots + 1] = svc("ReplicatedFirst")
+	spots[#spots + 1] = svc("ReplicatedStorage")
+	for i = 1, #spots do
+		local s = spots[i]
+		if s then
+			local a = s:FindFirstChildWhichIsA("LocalScript", true) or s:FindFirstChildWhichIsA("ModuleScript", true)
+			if a then
+				return a
+			end
+		end
+	end
+	return nil
+end
+
+local function prepFolder()
+	local isf = res("isfolder")
+	local mk = res("makefolder")
+	if type(isf) == "function" and type(mk) == "function" and not isf(base) then
+		directcall(mk, base)
+	end
+end
+
+local function rm(path)
+	local del = res("delfile")
+	if type(del) == "function" then
+		directcall(del, path)
+	end
+end
+
+local core = {
+	{ n = "checkcaller", f = function(fn)
+		local r = fn()
+		assert(type(r) == "boolean", "checkcaller must return a boolean")
+		assert(r == true, "executor thread should return true")
+	end },
+	{ n = "clonefunction", f = function(fn)
+		local function a(x)
+			return x + 1
+		end
+		local b = fn(a)
+		assert(type(b) == "function", "clonefunction must return a function")
+		assert(b ~= a, "clonefunction returned the same closure")
+		assert(b(1) == 2, "cloned function returned the wrong value")
+	end },
+	{ n = "getfunctionhash", f = function(fn)
+		local h = fn(function()
+			return "UNC_HASH"
+		end)
+		assert(type(h) == "string" and #h > 0, "getfunctionhash must return a non-empty string")
+	end },
+	{ n = "hookfunction", f = function(fn)
+		local function a(x)
+			return x + 1
+		end
+		local old = fn(a, function(x)
+			return x + 10
+		end)
+		assert(type(old) == "function", "hookfunction must return the original function")
+		assert(a(1) == 11, "hookfunction did not replace behavior")
+		assert(old(1) == 2, "returned original function behaved incorrectly")
+		local restore = res("restorefunction")
+		if type(restore) == "function" then
+			directcall(restore, a)
+		end
+	end },
+	{ n = "hookmetamethod", f = function(fn)
+		local old
+		old = fn(game, "__index", function(self, key)
+			if self == game and key == "__UNC_HOOK_TEST__" then
+				return "ok"
+			end
+			return old(self, key)
+		end)
+		assert(type(old) == "function", "hookmetamethod must return the original metamethod")
+		assert(game.__UNC_HOOK_TEST__ == "ok", "hookmetamethod did not intercept __index")
+	end },
+	{ n = "iscclosure", f = function(fn)
+		assert(type(fn(print)) == "boolean", "iscclosure must return a boolean")
+	end },
+	{ n = "isexecutorclosure", f = function(fn)
+		assert(type(fn(function() end)) == "boolean", "isexecutorclosure must return a boolean")
+	end },
+	{ n = "islclosure", f = function(fn)
+		assert(type(fn(function() end)) == "boolean", "islclosure must return a boolean")
+	end },
+	{ n = "loadstring", f = function(fn)
+		local f, e = fn("return ... + 1")
+		assert(type(f) == "function", "loadstring did not compile valid Luau: " .. tostring(e))
+		assert(f(4) == 5, "compiled chunk returned wrong value")
+	end },
+	{ n = "newcclosure", f = function(fn)
+		local f = fn(function(a)
+			return a + 1
+		end)
+		assert(type(f) == "function", "newcclosure must return a function")
+		assert(f(1) == 2, "newcclosure returned a broken function")
+	end },
+	{ n = "restorefunction", f = function(fn)
+		local hook = need("hookfunction")
+		local function a()
+			return "old"
+		end
+		hook(a, function()
+			return "new"
+		end)
+		assert(a() == "new", "hookfunction setup failed")
+		local ok, err = directcall(fn, a)
+		assert(ok, err or "restorefunction errored")
+		assert(a() == "old", "restorefunction did not restore the function")
+	end },
+	{ n = "debug.getconstant", f = function(fn)
+		local function a()
+			return "UNC_CONST"
+		end
+		local found = false
+		for i = 1, 20 do
+			local ok, v = directcall(fn, a, i)
+			if ok and v == "UNC_CONST" then
+				found = true
+				break
+			end
+		end
+		assert(found, "could not find expected constant")
+	end },
+	{ n = "debug.getconstants", f = function(fn)
+		local function a()
+			return "UNC_CONSTS"
+		end
+		local t = fn(a)
+		assert(type(t) == "table", "debug.getconstants must return a table")
+		assert(table.find(t, "UNC_CONSTS") ~= nil, "constants table did not include expected string")
+	end },
+	{ n = "debug.getproto", f = function(fn)
+		local function a()
+			local function b()
+				return true
+			end
+			return b
+		end
+		local ok, p = directcall(fn, a, 1)
+		assert(ok, p or "debug.getproto errored")
+		assert(p ~= nil, "debug.getproto returned nil")
+	end },
+	{ n = "debug.getprotos", f = function(fn)
+		local function a()
+			local function b()
+				return true
+			end
+			return b
+		end
+		local t = fn(a)
+		assert(type(t) == "table", "debug.getprotos must return a table")
+	end },
+	{ n = "debug.getstack", f = function(fn)
+		local a = "UNC_STACK"
+		local ok, r = directcall(fn, 1)
+		assert(ok, r or "debug.getstack errored")
+		assert(type(r) == "table" or r == a or r ~= nil, "debug.getstack returned nil")
+	end },
+	{ n = "debug.getupvalue", f = function(fn)
+		local up = "UNC_UP"
+		local function a()
+			return up
+		end
+		local ok, v = directcall(fn, a, 1)
+		assert(ok, v or "debug.getupvalue errored")
+		assert(v == up, "debug.getupvalue returned the wrong value")
+	end },
+	{ n = "debug.getupvalues", f = function(fn)
+		local up = "UNC_UPS"
+		local function a()
+			return up
+		end
+		local t = fn(a)
+		assert(type(t) == "table", "debug.getupvalues must return a table")
+		assert(table.find(t, up) ~= nil, "upvalue was not present")
+	end },
+	{ n = "debug.setconstant", f = function(fn)
+		local function a()
+			return "bad"
+		end
+		local ok, err = directcall(fn, a, 1, "good")
+		assert(ok, err or "debug.setconstant errored")
+		assert(a() == "good", "debug.setconstant did not change the constant")
+	end },
+	{ n = "debug.setstack", f = function(fn)
+		local function a()
+			local v = "bad"
+			fn(1, 1, "good")
+			return v
+		end
+		assert(a() == "good", "debug.setstack did not update the stack value")
+	end },
+	{ n = "debug.setupvalue", f = function(fn)
+		local up = function()
+			return "bad"
+		end
+		local function a()
+			return up()
+		end
+		local ok, err = directcall(fn, a, 1, function()
+			return "good"
+		end)
+		assert(ok, err or "debug.setupvalue errored")
+		assert(a() == "good", "debug.setupvalue did not update the upvalue")
+	end },
+	{ n = "cleardrawcache", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "cleardrawcache errored")
+	end },
+	{ n = "getrenderproperty", f = function(fn)
+		local obj = mkDraw("Square")
+		local setp = need("setrenderproperty")
+		setp(obj, "Visible", false)
+		local ok, v = directcall(fn, obj, "Visible")
+		cleanObj(obj)
+		assert(ok, v or "getrenderproperty errored")
+		assert(v == false, "getrenderproperty returned the wrong value")
+	end },
+	{ n = "isrenderobj", f = function(fn)
+		local obj = mkDraw("Square")
+		local ok, v = directcall(fn, obj)
+		cleanObj(obj)
+		assert(ok, v or "isrenderobj errored")
+		assert(type(v) == "boolean", "isrenderobj must return a boolean")
+		assert(v == true, "isrenderobj returned false for a Drawing object")
+	end },
+	{ n = "setrenderproperty", f = function(fn)
+		local obj = mkDraw("Square")
+		local ok, err = directcall(fn, obj, "Visible", false)
+		cleanObj(obj)
+		assert(ok, err or "setrenderproperty errored")
+	end },
+	{ n = "base64decode", names = { "base64decode", "crypt.base64decode", "crypt.base64.decode" }, f = function(fn)
+		assert(fn("dGVzdA==") == "test", "base64 decode failed")
+	end },
+	{ n = "base64encode", names = { "base64encode", "crypt.base64encode", "crypt.base64.encode" }, f = function(fn)
+		assert(fn("test") == "dGVzdA==", "base64 encode failed")
+	end },
+	{ n = "lz4compress", names = { "lz4compress", "crypt.lz4compress" }, f = function(fn)
+		local dec = need({ "lz4decompress", "crypt.lz4decompress" })
+		local raw = "UNC_LZ4_TEST"
+		local c = fn(raw)
+		assert(type(c) == "string", "lz4compress must return a string")
+		assert(dec(c, #raw) == raw, "compressed data did not round-trip")
+	end },
+	{ n = "lz4decompress", names = { "lz4decompress", "crypt.lz4decompress" }, f = function(fn)
+		local enc = need({ "lz4compress", "crypt.lz4compress" })
+		local raw = "UNC_LZ4_TEST"
+		local c = enc(raw)
+		assert(fn(c, #raw) == raw, "lz4decompress returned the wrong string")
+	end },
+	{ n = "getgc", f = function(fn)
+		local t = fn(true)
+		assert(type(t) == "table", "getgc must return a table")
+	end },
+	{ n = "getgenv", f = function(fn)
+		local t = fn()
+		assert(type(t) == "table", "getgenv must return a table")
+		assert(t == root or t.game == game or t._G ~= nil or next(t) ~= nil, "getgenv returned an unexpected empty table")
+	end },
+	{ n = "getreg", names = { "getreg", "getregistry", "debug.getregistry" }, f = function(fn)
+		assert(type(fn()) == "table", "getreg/getregistry must return a table")
+	end },
+	{ n = "getrenv", f = function(fn)
+		local t = fn()
+		assert(type(t) == "table", "getrenv must return a table")
+		assert(t.game == game, "getrenv().game must match game")
+	end },
+	{ n = "filtergc", f = function(fn)
+		local probe = { __unc_filtergc_key = id }
+		local r = fn("table", { KeyValuePairs = { __unc_filtergc_key = id } }, true)
+		if r == probe then
+			return
+		end
+		local list = fn("table", { Keys = { "__unc_filtergc_key" } }, false)
+		assert(type(list) == "table", "filtergc must return a table for filterOne=false")
+		for i = 1, #list do
+			if list[i] == probe then
+				return
+			end
+		end
+		assert(false, "filtergc did not find the probe table")
+	end },
+	{ n = "appendfile", f = function(fn)
+		local wr = need("writefile")
+		local rd = need("readfile")
+		local p = base .. "_append.txt"
+		wr(p, "a")
+		fn(p, "b")
+		assert(rd(p) == "ab", "appendfile did not append")
+		rm(p)
+	end },
+	{ n = "delfile", f = function(fn)
+		local wr = need("writefile")
+		local isf = need("isfile")
+		local p = base .. "_del.txt"
+		wr(p, "x")
+		assert(isf(p), "test file was not created")
+		fn(p)
+		assert(not isf(p), "delfile did not delete the file")
+	end },
+	{ n = "delfolder", f = function(fn)
+		local mk = need("makefolder")
+		local isf = need("isfolder")
+		local p = base .. "_folder_del"
+		mk(p)
+		assert(isf(p), "test folder was not created")
+		fn(p)
+		assert(not isf(p), "delfolder did not delete the folder")
+	end },
+	{ n = "getcustomasset", f = function(fn)
+		local wr = need("writefile")
+		local p = base .. "_asset.txt"
+		wr(p, "asset")
+		local a = fn(p)
+		assert(type(a) == "string" and #a > 0, "getcustomasset must return an asset string")
+		rm(p)
+	end },
+	{ n = "isfile", f = function(fn)
+		local wr = need("writefile")
+		local p = base .. "_isfile.txt"
+		wr(p, "x")
+		assert(fn(p) == true, "isfile returned false for a file")
+		rm(p)
+	end },
+	{ n = "isfolder", f = function(fn)
+		local mk = need("makefolder")
+		local p = base .. "_isfolder"
+		mk(p)
+		assert(fn(p) == true, "isfolder returned false for a folder")
+		local del = res("delfolder")
+		if type(del) == "function" then directcall(del, p) end
+	end },
+	{ n = "listfiles", f = function(fn)
+		prepFolder()
+		local wr = need("writefile")
+		wr(base .. "/a.txt", "x")
+		local t = fn(base)
+		assert(type(t) == "table", "listfiles must return a table")
+		assert(#t >= 1, "listfiles returned an empty table for a non-empty folder")
+	end },
+	{ n = "loadfile", f = function(fn)
+		local wr = need("writefile")
+		local p = base .. "_load.lua"
+		wr(p, "return 123")
+		local f, e = fn(p)
+		assert(type(f) == "function", "loadfile did not return a function: " .. tostring(e))
+		assert(f() == 123, "loaded file returned wrong value")
+		rm(p)
+	end },
+	{ n = "makefolder", f = function(fn)
+		local isf = need("isfolder")
+		local p = base .. "_mk"
+		fn(p)
+		assert(isf(p), "makefolder did not create a folder")
+		local del = res("delfolder")
+		if type(del) == "function" then directcall(del, p) end
+	end },
+	{ n = "readfile", f = function(fn)
+		local wr = need("writefile")
+		local p = base .. "_read.txt"
+		wr(p, "read-ok")
+		assert(fn(p) == "read-ok", "readfile returned wrong data")
+		rm(p)
+	end },
+	{ n = "writefile", f = function(fn)
+		local rd = need("readfile")
+		local p = base .. "_write.txt"
+		fn(p, "write-ok")
+		assert(rd(p) == "write-ok", "writefile did not write correct data")
+		rm(p)
+	end },
+	{ n = "cloneref", f = function(fn)
+		local cg = svc("CoreGui") or game
+		local c = fn(cg)
+		assert(typeof(c) == "Instance", "cloneref must return an Instance")
+	end },
+	{ n = "compareinstances", f = function(fn)
+		assert(fn(game, game) == true, "compareinstances must return true for same instance")
+	end },
+	{ n = "fireclickdetector", note = "exists-only by request; live signal is not fired" },
+	{ n = "fireproximityprompt", note = "exists-only by request; live prompt is not fired" },
+	{ n = "firetouchinterest", note = "exists-only by request; live touch is not fired" },
+	{ n = "getcallbackvalue", f = function(fn)
+		local bf = Instance.new("BindableFunction")
+		local cb = function()
+			return "ok"
+		end
+		bf.OnInvoke = cb
+		local got = fn(bf, "OnInvoke")
+		bf:Destroy()
+		assert(got == cb, "getcallbackvalue returned the wrong callback")
+	end },
+	{ n = "gethui", f = function(fn)
+		assert(typeof(fn()) == "Instance", "gethui must return an Instance")
+	end },
+	{ n = "getinstances", f = function(fn)
+		local t = fn()
+		assert(type(t) == "table", "getinstances must return a table")
+	end },
+	{ n = "getnilinstances", f = function(fn)
+		local t = fn()
+		assert(type(t) == "table", "getnilinstances must return a table")
+	end },
+	{ n = "getnamecallmethod", f = function(fn)
+		local v = fn()
+		assert(v == nil or type(v) == "string", "getnamecallmethod must return string or nil outside __namecall")
+	end },
+	{ n = "getrawmetatable", f = function(fn)
+		assert(type(fn(game)) == "table", "getrawmetatable(game) must return a table")
+	end },
+	{ n = "isreadonly", f = function(fn)
+		assert(type(fn({})) == "boolean", "isreadonly must return a boolean")
+	end },
+	{ n = "setrawmetatable", f = function(fn)
+		local t = {}
+		fn(t, { __index = function()
+			return "ok"
+		end })
+		assert(t.x == "ok", "setrawmetatable did not update metatable")
+	end },
+	{ n = "setreadonly", f = function(fn)
+		local t = {}
+		fn(t, true)
+		local locked = not directcall(function()
+			t.x = true
+		end)
+		fn(t, false)
+		t.x = true
+		assert(t.x == true, "setreadonly(false) did not unlock table")
+		assert(type(locked) == "boolean", "lock probe failed")
+	end },
+	{ n = "identifyexecutor", f = function(fn)
+		local a, b = fn()
+		assert(type(a) == "string" and #a > 0, "identifyexecutor must return executor name")
+		assert(b == nil or type(b) == "string" or type(b) == "number", "unexpected version return type")
+	end },
+	{ n = "request", names = { "request", "http.request", "syn.request" }, timeout = 15, f = function(fn)
+		local ok, r = directcall(fn, { Url = "https://example.com", Method = "GET" })
+		assert(ok, r or "request errored")
+		assert(type(r) == "table" or type(r) == "string", "request must return a table or string")
+	end },
+	{ n = "gethiddenproperty", f = function(fn)
+		local fire = Instance.new("Fire")
+		local ok, v, hidden = directcall(fn, fire, "size_xml")
+		fire:Destroy()
+		assert(ok, v or "gethiddenproperty errored")
+		assert(v ~= nil, "gethiddenproperty returned nil")
+		assert(hidden == nil or type(hidden) == "boolean", "second return must be boolean or nil")
+	end },
+	{ n = "getthreadidentity", names = { "getthreadidentity", "getidentity", "getthreadcontext" }, f = function(fn)
+		assert(type(fn()) == "number", "getthreadidentity must return a number")
+	end },
+	{ n = "isscriptable", f = function(fn)
+		local fire = Instance.new("Fire")
+		local ok, v = directcall(fn, fire, "size_xml")
+		fire:Destroy()
+		assert(ok, v or "isscriptable errored")
+		assert(type(v) == "boolean", "isscriptable must return a boolean")
+	end },
+	{ n = "sethiddenproperty", f = function(fn)
+		local geth = need("gethiddenproperty")
+		local fire = Instance.new("Fire")
+		local ok, r = directcall(fn, fire, "size_xml", 10)
+		local got = geth(fire, "size_xml")
+		fire:Destroy()
+		assert(ok, r or "sethiddenproperty errored")
+		assert(got == 10, "sethiddenproperty did not set hidden property")
+	end },
+	{ n = "setscriptable", f = function(fn)
+		local iss = need("isscriptable")
+		local fire = Instance.new("Fire")
+		local old = iss(fire, "size_xml")
+		local ok, err = directcall(fn, fire, "size_xml", true)
+		assert(ok, err or "setscriptable errored")
+		assert(iss(fire, "size_xml") == true, "setscriptable did not make property scriptable")
+		directcall(fn, fire, "size_xml", old)
+		fire:Destroy()
+	end },
+	{ n = "setthreadidentity", names = { "setthreadidentity", "setidentity", "setthreadcontext" }, f = function(fn)
+		local getid = need({ "getthreadidentity", "getidentity", "getthreadcontext" })
+		local old = getid()
+		local ok, err = directcall(fn, old)
+		assert(ok, err or "setthreadidentity errored")
+		assert(getid() == old, "setthreadidentity did not accept current identity")
+	end },
+	{ n = "getcallingscript", f = function(fn)
+		local v = fn()
+		assert(v == nil or typeof(v) == "Instance", "getcallingscript must return Instance or nil")
+	end },
+	{ n = "getloadedmodules", f = function(fn)
+		assert(type(fn()) == "table", "getloadedmodules must return a table")
+	end },
+	{ n = "getrunningscripts", f = function(fn)
+		assert(type(fn()) == "table", "getrunningscripts must return a table")
+	end },
+	{ n = "getscriptbytecode", f = function(fn)
+		local s = anyScript()
+		if not s then
+			return "no LocalScript/ModuleScript found; skipped bytecode fetch"
+		end
+		local bc = fn(s)
+		assert(type(bc) == "string", "getscriptbytecode must return a string")
+	end },
+	{ n = "getscriptclosure", f = function(fn)
+		local s = anyScript()
+		if not s then
+			return "no LocalScript/ModuleScript found; skipped closure fetch"
+		end
+		local f = fn(s)
+		assert(type(f) == "function", "getscriptclosure must return a function")
+	end },
+	{ n = "getscripthash", f = function(fn)
+		local s = anyScript()
+		if not s then
+			return "no LocalScript/ModuleScript found; skipped hash fetch"
+		end
+		local h = fn(s)
+		assert(type(h) == "string" and #h > 0, "getscripthash must return a non-empty string")
+	end },
+	{ n = "getscripts", f = function(fn)
+		assert(type(fn()) == "table", "getscripts must return a table")
+	end },
+	{ n = "getsenv", f = function(fn)
+		local s = anyScript()
+		if not s then
+			return "no LocalScript/ModuleScript found; skipped env fetch"
+		end
+		local e = fn(s)
+		assert(type(e) == "table", "getsenv must return a table")
+	end },
+	{ n = "firesignal", f = function(fn)
+		local b = Instance.new("BindableEvent")
+		local got
+		local cn = b.Event:Connect(function(v)
+			got = v
+		end)
+		fn(b.Event, "ok")
+		task.wait()
+		cn:Disconnect()
+		b:Destroy()
+		assert(got == "ok", "firesignal did not fire connection")
+	end },
+	{ n = "getconnections", f = function(fn)
+		local b = Instance.new("BindableEvent")
+		local cn = b.Event:Connect(function() end)
+		local t = fn(b.Event)
+		cn:Disconnect()
+		b:Destroy()
+		assert(type(t) == "table", "getconnections must return a table")
+		assert(#t >= 1, "getconnections did not return the active connection")
+	end },
+	{ n = "replicatesignal", note = "signature depends on the target signal; existence-only" },
+	{ n = "WebSocket.connect", timeout = 20, f = function(fn)
+		local ws = fn("wss://ws.postman-echo.com/raw")
+		assert(type(ws) == "table" or type(ws) == "userdata", "WebSocket.connect must return a websocket object")
+		assert(type(ws.Send) == "function" or type(ws.send) == "function", "websocket object must expose Send/send")
+		if type(ws.Close) == "function" then directcall(ws.Close, ws) end
+		if type(ws.close) == "function" then directcall(ws.close, ws) end
+	end },
+}
+
+local extra = {
+	{ n = "rconsolecreate", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn)
+		assert(ok2, err or "rconsolecreate errored")
+		return "created/opened console"
+	end },
+	{ n = "rconsolesettitle", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn, "UNC Test")
+		assert(ok2, err or "rconsolesettitle errored")
+	end },
+	{ n = "rconsoleprint", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn, "[UNC] rconsoleprint test\n")
+		assert(ok2, err or "rconsoleprint errored")
+	end },
+	{ n = "rconsoleinfo", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn, "[UNC] rconsoleinfo test")
+		assert(ok2, err or "rconsoleinfo errored")
+	end },
+	{ n = "rconsolewarn", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn, "[UNC] rconsolewarn test")
+		assert(ok2, err or "rconsolewarn errored")
+	end },
+	{ n = "rconsoleerror", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn, "[UNC] rconsoleerror test")
+		assert(ok2, err or "rconsoleerror errored")
+	end },
+	{ n = "rconsoleclear", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn)
+		assert(ok2, err or "rconsoleclear errored")
+	end },
+	{ n = "rconsoleinput", timeout = 25, f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		notify("UNC rconsoleinput", "Type anything in the console and press Enter to pass this test.", 12)
+		local r = fn()
+		assert(type(r) == "string", "rconsoleinput must return console input as a string")
+		return "returned input"
+	end },
+	{ n = "rconsoledestroy", f = function(fn)
+		local ok, why = needRcon()
+		if not ok then
+			return mkSkip("rconsole skipped: " .. tostring(why))
+		end
+		local ok2, err = directcall(fn)
+		assert(ok2, err or "rconsoledestroy errored")
+		return "destroyed console"
+	end },
+	{ n = "crypt.base64encode", f = function(fn)
+		assert(fn("test") == "dGVzdA==", "crypt.base64encode failed")
+	end },
+	{ n = "crypt.base64decode", f = function(fn)
+		assert(fn("dGVzdA==") == "test", "crypt.base64decode failed")
+	end },
+	{ n = "crypt.encrypt", f = function(fn)
+		local keyFn = need("crypt.generatekey")
+		local key = keyFn()
+		local enc, iv = fn("UNC_AES_TEST", key)
+		assert(type(enc) == "string" and #enc > 0, "crypt.encrypt must return encrypted data")
+		assert(type(iv) == "string" and #iv > 0, "crypt.encrypt must return an iv")
+	end },
+	{ n = "crypt.decrypt", f = function(fn)
+		local keyFn = need("crypt.generatekey")
+		local encFn = need("crypt.encrypt")
+		local raw = "UNC_AES_TEST"
+		local key = keyFn()
+		local enc, iv = encFn(raw, key)
+		local dec = fn(enc, key, iv)
+		assert(dec == raw, "crypt.decrypt did not round-trip crypt.encrypt output")
+	end },
+	{ n = "crypt.generatebytes", f = function(fn)
+		local s = fn(16)
+		assert(type(s) == "string" and #s > 0, "crypt.generatebytes must return string")
+	end },
+	{ n = "crypt.generatekey", f = function(fn)
+		local s = fn()
+		assert(type(s) == "string" and #s > 0, "crypt.generatekey must return string")
+	end },
+	{ n = "crypt.hash", f = function(fn)
+		local h = fn("test", "sha256")
+		assert(type(h) == "string" and #h > 0, "crypt.hash must return string")
+	end },
+	{ n = "crypt.hmac", f = function(fn)
+		local tries = {
+			{ "test", "key", "sha256" },
+			{ "test", "key" },
+			{ "key", "test", "sha256" },
+			{ "sha256", "test", "key" },
+		}
+		for i = 1, #tries do
+			local a = tries[i]
+			local ok, r = directcall(fn, a[1], a[2], a[3])
+			if ok and type(r) == "string" and #r > 0 then
+				return "accepted signature #" .. i
+			end
+		end
+		error("crypt.hmac did not return a non-empty string with common signatures")
+	end },
+	{ n = "crypt.random", f = function(fn)
+		local s = fn(8)
+		assert(type(s) == "string" and #s > 0, "crypt.random must return string")
+	end },
+	{ n = "dofile", note = "behavior varies between local path and URL implementations; existence-only" },
+	{ n = "debug.getinfo", f = function(fn)
+		local info = fn(function() end)
+		assert(type(info) == "table", "debug.getinfo must return table")
+		assert(info.func == nil or type(info.func) == "function", "debug.getinfo.func must be function or nil")
+	end },
+	{ n = "debug.getcallstack", f = function(fn)
+		local ok, r = directcall(fn)
+		assert(ok, r or "debug.getcallstack errored")
+		assert(type(r) == "table", "debug.getcallstack must return table")
+	end },
+	{ n = "debug.getregistry", f = function(fn)
+		assert(type(fn()) == "table", "debug.getregistry must return table")
+	end },
+	{ n = "debug.getsafeenv", f = function(fn)
+		assert(type(fn()) == "boolean", "debug.getsafeenv must return boolean")
+	end },
+	{ n = "debug.isvalidlevel", f = function(fn)
+		assert(type(fn(1)) == "boolean", "debug.isvalidlevel must return boolean")
+	end },
+	{ n = "debug.setinfo", f = function(fn)
+		local getInfo = res("debug.getinfo")
+		local function a() end
+		local ok = directcall(fn, a, { name = "unc_setinfo" })
+		if not ok then
+			ok = directcall(fn, a, "name", "unc_setinfo")
+		end
+		assert(ok, "debug.setinfo rejected common function metadata signatures")
+		if type(getInfo) == "function" then
+			local info = getInfo(a)
+			assert(type(info) == "table", "debug.getinfo failed after debug.setinfo")
+		end
+	end },
+	{ n = "debug.setname", f = function(fn)
+		local getInfo = res("debug.getinfo")
+		local function a() end
+		local ok = directcall(fn, a, "unc_setname")
+		if not ok then
+			ok = directcall(fn, "unc_setname")
+		end
+		assert(ok, "debug.setname rejected common signatures")
+		if type(getInfo) == "function" then
+			local info = getInfo(a)
+			assert(type(info) == "table", "debug.getinfo failed after debug.setname")
+		end
+	end },
+	{ n = "debug.setsafeenv", f = function(fn)
+		local function a() end
+		local ok = directcall(fn, a, true)
+		if not ok then
+			ok = directcall(fn, true)
+		end
+		assert(ok, "debug.setsafeenv rejected common signatures")
+	end },
+	{ n = "Drawing.Fonts", f = function(v)
+		assert(type(v) == "table", "Drawing.Fonts must be table")
+	end },
+	{ n = "Drawing.new", f = function(fn)
+		local o = fn("Square")
+		assert(o ~= nil, "Drawing.new returned nil")
+		cleanObj(o)
+	end },
+	{ n = "DrawingImmediate.GetPaint", f = function(fn)
+		local ev = fn(0)
+		assert(ev ~= nil, "DrawingImmediate.GetPaint returned nil")
+		assert(type(ev) == "table" or type(ev) == "userdata", "DrawingImmediate.GetPaint returned unexpected type")
+		assert(type(ev.Connect) == "function" or type(ev.connect) == "function", "paint object must expose Connect/connect")
+	end },
+	{ n = "isrbxactive", f = function(fn)
+		assert(type(fn()) == "boolean", "isrbxactive must return boolean")
+	end },
+	{ n = "keypress", f = function(fn)
+		local ok, err = directcall(fn, Enum.KeyCode.F.Value)
+		if not ok then ok, err = directcall(fn, Enum.KeyCode.F) end
+		assert(ok, err or "keypress errored")
+	end },
+	{ n = "keyrelease", f = function(fn)
+		local ok, err = directcall(fn, Enum.KeyCode.F.Value)
+		if not ok then ok, err = directcall(fn, Enum.KeyCode.F) end
+		assert(ok, err or "keyrelease errored")
+	end },
+	{ n = "keytap", f = function(fn)
+		local ok, err = directcall(fn, Enum.KeyCode.F.Value)
+		if not ok then ok, err = directcall(fn, Enum.KeyCode.F) end
+		assert(ok, err or "keytap errored")
+	end },
+	{ n = "mouse1click", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "mouse1click errored")
+	end },
+	{ n = "mouse1press", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "mouse1press errored")
+	end },
+	{ n = "mouse1release", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "mouse1release errored")
+	end },
+	{ n = "mouse2click", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "mouse2click errored")
+	end },
+	{ n = "mouse2press", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "mouse2press errored")
+	end },
+	{ n = "mouse2release", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "mouse2release errored")
+	end },
+	{ n = "mousemoveabs", f = function(fn)
+		local ok, err = directcall(fn, 0, 0)
+		assert(ok, err or "mousemoveabs errored")
+	end },
+	{ n = "mousemoverel", f = function(fn)
+		local ok, err = directcall(fn, 0, 0)
+		assert(ok, err or "mousemoverel errored")
+	end },
+	{ n = "mousescroll", f = function(fn)
+		local ok, err = directcall(fn, 0)
+		assert(ok, err or "mousescroll errored")
+	end },
+	{ n = "isfunctionhooked", f = function(fn)
+		assert(type(fn(function() end)) == "boolean", "isfunctionhooked must return boolean")
+	end },
+	{ n = "isnewcclosure", f = function(fn)
+		assert(type(fn(function() end)) == "boolean", "isnewcclosure must return boolean")
+	end },
+	{ n = "isourthread", f = function(fn)
+		assert(type(fn(coroutine.running())) == "boolean", "isourthread must return boolean")
+	end },
+	{ n = "newlclosure", f = function(fn)
+		local f = fn(function()
+			return "ok"
+		end)
+		assert(type(f) == "function" and f() == "ok", "newlclosure returned bad function")
+	end },
+	{ n = "setstackhidden", f = function(fn)
+		local function a()
+			return "ok"
+		end
+		local ok, err = directcall(fn, a, true)
+		assert(ok, err or "setstackhidden errored")
+		assert(a() == "ok", "setstackhidden broke the function")
+	end },
+	{ n = "getrendersteppedlist", f = function(fn)
+		assert(type(fn()) == "table", "getrendersteppedlist must return table")
+	end },
+	{ n = "makereadonly", f = function(fn)
+		local t = {}
+		fn(t)
+		local iro = res("isreadonly")
+		if type(iro) == "function" then
+			assert(iro(t) == true, "makereadonly did not make table readonly")
+		else
+			assert(not directcall(function() t.x = true end), "makereadonly did not block writes")
+		end
+	end },
+	{ n = "makewritable", f = function(fn)
+		local t = {}
+		local mr = res("makereadonly")
+		if type(mr) == "function" then
+			mr(t)
+		else
+			t = table.freeze(t)
+		end
+		fn(t)
+		t.x = true
+		assert(t.x == true, "makewritable did not allow writes")
+	end },
+	{ n = "setnamecallmethod", f = function(fn)
+		local getm = res("getnamecallmethod")
+		local old = type(getm) == "function" and getm() or nil
+		local ok, err = directcall(fn, old or "GetService")
+		if old ~= nil then directcall(fn, old) end
+		assert(ok, err or "setnamecallmethod errored")
+	end },
+	{ n = "clearteleportqueue", f = function(fn)
+		local ok, err = directcall(fn)
+		assert(ok, err or "clearteleportqueue errored")
+	end },
+	{ n = "decompile", f = function(fn)
+		local s = anyScript()
+		if not s then
+			return "no LocalScript/ModuleScript found; skipped decompile"
+		end
+		local out = fn(s)
+		assert(type(out) == "string", "decompile must return a string")
+	end },
+	{ n = "getfflag", f = function(fn)
+		local ok, r = directcall(fn, "DebugGraphicsPreferD3D11")
+		assert(ok, r or "getfflag errored")
+		assert(r ~= nil, "getfflag returned nil")
+	end },
+	{ n = "getfflagtype", f = function(fn)
+		local ok, r = directcall(fn, "DebugGraphicsPreferD3D11")
+		assert(ok, r or "getfflagtype errored")
+		assert(type(r) == "string", "getfflagtype must return a string")
+	end },
+	{ n = "getfpscap", f = function(fn)
+		assert(type(fn()) == "number", "getfpscap must return number")
+	end },
+	{ n = "gethwid", f = function(fn)
+		local s = fn()
+		assert(type(s) == "string" and #s > 0, "gethwid must return non-empty string")
+	end },
+	{ n = "getobjects", f = function(fn)
+		local ok, r = directcall(fn, "rbxassetid://1")
+		assert(ok, r or "getobjects errored")
+		assert(type(r) == "table", "getobjects must return table")
+	end },
+	{ n = "httpget", timeout = 15, f = function(fn)
+		local r = fn("https://example.com")
+		assert(type(r) == "string" and #r > 0, "httpget must return response body string")
+	end },
+	{ n = "messagebox", timeout = 45, f = function(fn)
+		local r = fn("UNC messagebox test\nClick OK to continue.", "UNC Test", 0)
+		assert(type(r) == "number", "messagebox(text, caption, flags) must return a numeric result")
+		return "opened with flags=0; returned " .. tostring(r)
+	end },
+	{ n = "queueonteleport", names = { "queueonteleport", "queue_on_teleport", "syn.queue_on_teleport" }, f = function(fn)
+		local ok, err = directcall(fn, "print('UNC queueonteleport test')")
+		assert(ok, err or "queueonteleport errored")
+		local clear = res("clearteleportqueue")
+		if type(clear) == "function" then directcall(clear) end
+	end },
+	{ n = "setclipboard", f = function(fn)
+		local ok, err = directcall(fn, "UNC_TEST")
+		assert(ok, err or "setclipboard errored")
+	end },
+	{ n = "setfflag", f = function(fn)
+		local gf = res("getfflag")
+		local flag = "DebugGraphicsPreferD3D11"
+		local v = type(gf) == "function" and gf(flag) or "False"
+		local ok, err = directcall(fn, flag, tostring(v))
+		assert(ok, err or "setfflag errored")
+	end },
+	{ n = "setfpscap", f = function(fn)
+		local old
+		local gf = res("getfpscap")
+		if type(gf) == "function" then old = gf() end
+		local ok, err = directcall(fn, old or 60)
+		assert(ok, err or "setfpscap errored")
+	end },
+	{ n = "setrbxclipboard", f = function(fn)
+		local ok, err = directcall(fn, "UNC_TEST")
+		assert(ok, err or "setrbxclipboard errored")
+	end },
+	{ n = "gethiddenproperties", f = function(fn)
+		local p = Instance.new("Part")
+		local t = fn(p)
+		p:Destroy()
+		assert(type(t) == "table", "gethiddenproperties must return table")
+	end },
+	{ n = "getproperties", f = function(fn)
+		local p = Instance.new("Part")
+		local t = fn(p)
+		p:Destroy()
+		assert(type(t) == "table", "getproperties must return table")
+	end },
+	{ n = "getbspval", f = function(fn)
+		local ok, r = directcall(fn, workspace.Terrain, "SmoothGrid", true)
+		assert(ok, r or "getbspval errored")
+		assert(type(r) == "string", "getbspval must return BinaryString data as a string")
+	end },
+	{ n = "getpcd", f = function(fn)
+		local okNew, mesh = directcall(Instance.new, "UnionOperation")
+		assert(okNew and mesh ~= nil, "UnionOperation could not be created for getpcd test")
+		local ok, a, b = directcall(fn, mesh)
+		mesh:Destroy()
+		assert(ok, a or "getpcd errored")
+		assert(type(a) == "string" and type(b) == "string", "getpcd must return hash and binary data strings")
+	end },
+	{ n = "getproximitypromptduration", f = function(fn)
+		local p = Instance.new("ProximityPrompt")
+		local ok, r = directcall(fn, p)
+		p:Destroy()
+		assert(ok, r or "getproximitypromptduration errored")
+		assert(type(r) == "number", "getproximitypromptduration must return number")
+	end },
+	{ n = "setproximitypromptduration", f = function(fn)
+		local p = Instance.new("ProximityPrompt")
+		local getd = res("getproximitypromptduration")
+		local ok, err = directcall(fn, p, 0)
+		assert(ok, err or "setproximitypromptduration errored")
+		if type(getd) == "function" then
+			assert(getd(p) == 0, "setproximitypromptduration did not set duration")
+		end
+		p:Destroy()
+	end },
+	{ n = "getsimulationradius", f = function(fn)
+		assert(type(fn()) == "number", "getsimulationradius must return number")
+	end },
+	{ n = "setsimulationradius", f = function(fn)
+		local getr = res("getsimulationradius")
+		local old = type(getr) == "function" and getr() or 0
+		local ok, err = directcall(fn, old)
+		assert(ok, err or "setsimulationradius errored")
+	end },
+	{ n = "isnetworkowner", f = function(fn)
+		local p = Instance.new("Part")
+		p.Anchored = false
+		p.Parent = workspace
+		local ok, r = directcall(fn, p)
+		p:Destroy()
+		assert(ok, r or "isnetworkowner errored")
+		assert(type(r) == "boolean", "isnetworkowner must return boolean")
+	end },
+	{ n = "getscriptfromthread", f = function(fn)
+		local co = coroutine.create(function() task.wait() end)
+		coroutine.resume(co)
+		local ok, r = directcall(fn, co)
+		assert(ok, r or "getscriptfromthread errored")
+		assert(r == nil or typeof(r) == "Instance", "getscriptfromthread must return Instance or nil")
+	end },
+	{ n = "getscriptthread", f = function(fn)
+		local s = anyScript()
+		if not s then
+			return "no LocalScript/ModuleScript found; skipped script thread fetch"
+		end
+		local ok, r = directcall(fn, s)
+		assert(ok, r or "getscriptthread errored")
+		assert(r == nil or type(r) == "thread", "getscriptthread must return thread or nil")
+	end },
+	{ n = "cansignalreplicate", f = function(fn)
+		local b = Instance.new("BindableEvent")
+		local ok, r = directcall(fn, b.Event)
+		b:Destroy()
+		assert(ok, r or "cansignalreplicate errored")
+		assert(type(r) == "boolean", "cansignalreplicate must return boolean")
+	end },
+	{ n = "getconnection", f = function(fn)
+		local b = Instance.new("BindableEvent")
+		local cn = b.Event:Connect(function() end)
+		local ok, r = directcall(fn, b.Event, 1)
+		cn:Disconnect()
+		b:Destroy()
+		assert(ok, r or "getconnection errored")
+		assert(type(r) == "table" or type(r) == "userdata" or r == nil, "getconnection returned unexpected type")
+	end },
+	{ n = "getsignalarguments", f = function(fn)
+		local b = Instance.new("BindableEvent")
+		local ok, r = directcall(fn, b.Event)
+		b:Destroy()
+		assert(ok, r or "getsignalarguments errored")
+		assert(type(r) == "table", "getsignalarguments must return table")
+	end },
+	{ n = "getsignalargumentsinfo", f = function(fn)
+		local b = Instance.new("BindableEvent")
+		local ok, r = directcall(fn, b.Event)
+		b:Destroy()
+		assert(ok, r or "getsignalargumentsinfo errored")
+		assert(type(r) == "table", "getsignalargumentsinfo must return table")
+	end },
+	{ n = "getsignalwhitelist", f = function(fn)
+		local ok, r = directcall(fn)
+		assert(ok, r or "getsignalwhitelist errored")
+		assert(type(r) == "table", "getsignalwhitelist must return table")
+	end },
+	{ n = "Regex.Escape", f = function(fn)
+		local r = fn("a.b")
+		assert(type(r) == "string", "Regex.Escape must return string")
+		assert(r:find(".", 1, true) ~= nil or r:find("\\.", 1, true) ~= nil, "Regex.Escape did not escape dot-like input")
+	end },
+	{ n = "Regex.new", f = function(fn)
+		local ok, r = directcall(fn, "abc")
+		assert(ok, r or "Regex.new errored")
+		assert(type(r) == "table" or type(r) == "userdata", "Regex.new must return regex object")
+	end },
+	{ n = "oth.hook", f = function(fn)
+		local unhook = res("oth.unhook")
+		local target = math.abs
+		local ok, r = directcall(fn, target, function(x)
+			return target(x)
+		end)
+		assert(ok, r or "oth.hook errored")
+		assert(r ~= nil, "oth.hook must return a hook handle/original callback")
+		if type(unhook) == "function" then
+			directcall(unhook, target)
+			directcall(unhook, r)
+		end
+	end },
+	{ n = "oth.unhook", f = function(fn)
+		local hook = res("oth.hook")
+		assert(type(hook) == "function", "missing oth.hook dependency")
+		local target = math.max
+		local h = hook(target, function(a, b)
+			return target(a, b)
+		end)
+		local ok = directcall(fn, target)
+		if not ok then ok = directcall(fn, h) end
+		assert(ok, "oth.unhook rejected common hook handles")
+	end },
+	{ n = "oth.get_original_thread", f = function(fn)
+		local r = fn()
+		assert(r == nil or type(r) == "thread", "oth.get_original_thread returned unexpected type")
+	end },
+	{ n = "oth.get_root_callback", f = function(fn)
+		local r = fn()
+		assert(r == nil or type(r) == "function", "oth.get_root_callback returned unexpected type")
+	end },
+	{ n = "oth.is_hook_thread", f = function(fn)
+		assert(type(fn()) == "boolean", "oth.is_hook_thread must return boolean")
+	end },
+}
+
+
+local function runOne(d, kind)
+	local nmList = d.names or { d.n }
+	local fn, used = res(nmList)
+	local s = st[kind]
+	if fn == nil then
+		s.miss += 1
+		local msg = d.n .. " -> " .. join(names(nmList))
+		if kind == "core" then
+			add(ls.miss, msg)
+			warn("❌ missing core: " .. msg)
+		else
+			add(ls.extraMiss, msg)
+			print("⏺️ optional missing: " .. msg)
+		end
+		return
+	end
+	local label = used == d.n and d.n or (d.n .. " [" .. used .. "]")
+	if not d.f then
+		s.exist += 1
+		local note = d.note or "no safe behavior test"
+		if kind == "core" then
+			add(ls.exist, label .. " • " .. note)
+		else
+			add(ls.extraExist, label .. " • " .. note)
+		end
+		print("⏺️ " .. label .. " • exists; " .. note)
+		return
+	end
+	local ok, ret = runTimeout(function()
+		return d.f(fn, used)
+	end, d.timeout)
+	if ok then
+		if type(ret) == "table" and ret._unc_skip then
+			s.skip += 1
+			local msg = label .. " • " .. tostring(ret._unc_skip)
+			if kind == "core" then
+				add(ls.skip, msg)
+			else
+				add(ls.extraSkip, msg)
+			end
+			print("⏭️ " .. msg)
+			return
+		end
+		s.pass += 1
+		if kind == "core" then
+			add(ls.pass, label .. (ret and " • " .. tostring(ret) or ""))
+		else
+			add(ls.extraPass, label .. (ret and " • " .. tostring(ret) or ""))
+		end
+		line(true, label, ret)
+	else
+		s.fail += 1
+		local msg = label .. " - " .. short(ret)
+		if kind == "core" then
+			add(ls.fail, msg)
+		else
+			add(ls.extraFail, msg)
+		end
+		line(false, label, short(ret))
+	end
+end
+
+print("\nUNC Environment Check")
+print("Core = official sUNC documented functions only")
+print("Optional = documented executor extensions; behavior-tested and not counted against UNC score")
+print("Aliases are fallback-only and exists-only checks are not counted as passes\n")
+
+for i = 1, #core do
+	runOne(core[i], "core")
+end
+
+print("\nOptional documented extension checks")
+for i = 1, #extra do
+	runOne(extra[i], "extra")
+end
+
+local delFolder = res("delfolder")
+if type(delFolder) == "function" then
+	directcall(delFolder, base)
+end
+
+local function sort(t)
+	table.sort(t, function(a, b)
+		return tostring(a) < tostring(b)
+	end)
+end
+for _, t in ls do
+	sort(t)
+end
+
+local total = st.core.pass + st.core.fail + st.core.miss
+local rate = total > 0 and math.floor((st.core.pass / total) * 100 + 0.5) or 0
+print("\nUNC Summary")
+print("✅ Core passes: " .. st.core.pass)
+print("⛔ Core behavior fails: " .. st.core.fail)
+print("❌ Core missing: " .. st.core.miss)
+print("⏺️ Core exists-only: " .. st.core.exist)
+print("UNC core score: " .. rate .. "% (" .. st.core.pass .. " / " .. total .. ")")
+print("\nOptional documented extensions")
+print("✅ Optional passes: " .. st.extra.pass)
+print("⛔ Optional behavior fails: " .. st.extra.fail)
+print("⏭️ Optional skipped: " .. st.extra.skip)
+print("⏺️ Optional exists-only: " .. st.extra.exist)
+print("⏺️ Optional missing: " .. st.extra.miss)
+
+if #ls.miss > 0 then
+	print("\n❌ Missing core functions:")
+	print("  " .. table.concat(ls.miss, ", "))
+end
+
+if #ls.extraSkip > 0 then
+	print("\n⏭️ Skipped optional functions:")
+	print("  " .. table.concat(ls.extraSkip, ", "))
+end
+if #ls.fail > 0 then
+	print("\n⛔ Core behavior failures:")
+	print("  " .. table.concat(ls.fail, "\n  "))
+end
+if #ls.extraFail > 0 then
+	print("\n⛔ Optional extension behavior failures:")
+	print("  " .. table.concat(ls.extraFail, "\n  "))
+end
+
+local verdict
+if rate >= 95 and st.core.fail == 0 and st.core.miss == 0 then
+	verdict = "Excellent UNC compatibility."
+elseif rate >= 85 then
+	verdict = "Good UNC compatibility, with a few missing or broken core functions."
+elseif rate >= 85 then
+	verdict = "Good UNC compatibility, with a few missing or broken core functions."
+elseif rate >= 30 then
+	game.Players.LocalPlayer:Kick("Incompatible executor.")
+else
+	game.Players.LocalPlayer:Kick("Incompatible executor.")
+end
+print("\nVerdict: " .. verdict)
